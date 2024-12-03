@@ -14,6 +14,7 @@ import boto3
 import dateutil.parser
 import findspark
 import psycopg
+from psycopg.rows import dict_row
 import pyarrow as pa
 import pyspark.sql.functions as sf
 from botocore.exceptions import ClientError
@@ -1017,33 +1018,43 @@ def batched(configs, n):
 class DataManager:
     def __init__(
         self,
+        dbname,
+        user,
+        port,
+        host,
+        password=None,
         nprocs: int = 1,
-        configs: list[AtomicConfiguration] = None,
+        # configs: list[AtomicConfiguration] = None,
         prop_defs: list[dict] = None,
         prop_map: dict = None,
-        dataset_id=None,
+        # dataset_id=None,
         standardize_energy: bool = True,
         read_write_batch_size=10000,
     ):
-        self.configs = configs
+        self.dbname = dbname
+        self.user = user
+        self.port = port
+        self.user = user
+        self.password = password
+        # self.configs = configs
         if isinstance(prop_defs, dict):
             prop_defs = [prop_defs]
         self.prop_defs = prop_defs
         self.read_write_batch_size = read_write_batch_size
         self.prop_map = prop_map
         self.nprocs = nprocs
-        self.dataset_id = dataset_id
+        # self.dataset_id = dataset_id
         self.standardize_energy = standardize_energy
-        if self.dataset_id is None:
-            self.dataset_id = generate_ds_id()
-        print("Dataset ID:", self.dataset_id)
+        #if self.dataset_id is None:
+        #     self.dataset_id = generate_ds_id()
+        #print("Dataset ID:", self.dataset_id)
 
     @staticmethod
     def _gather_co_po_rows(
+        configs: list[AtomicConfiguration],
         prop_defs: list[dict],
         prop_map: dict,
         dataset_id,
-        configs: list[AtomicConfiguration],
         standardize_energy: bool = True,
     ):
         """Convert COs and DOs to Spark rows."""
@@ -1065,7 +1076,7 @@ class DataManager:
         return co_po_rows
 
     def gather_co_po_rows_pool(
-        self, config_chunks: list[list[AtomicConfiguration]], pool
+        self, config_chunks: list[list[AtomicConfiguration]], pool, dataset_id=None
     ):
         """
         Wrapper for _gather_co_po_rows.
@@ -1073,31 +1084,33 @@ class DataManager:
         Returns a batch of tuples of (configuration_row, property_row).
         """
 
+        if dataset_id is None:
+            dataset_id = generate_ds_id()
+
         part_gather = partial(
             self._gather_co_po_rows,
-            self.prop_defs,
-            self.prop_map,
-            self.dataset_id,
-            self.standardize_energy,
+            prop_defs=self.prop_defs,
+            prop_map=self.prop_map,
+            dataset_id=dataset_id,
+            standardize_energy=self.standardize_energy,
         )
         return itertools.chain.from_iterable(pool.map(part_gather, list(config_chunks)))
 
-    def gather_co_po_in_batches(self):
+    def gather_co_po_in_batches(self, configs, dataset_id=None):
         """
         Wrapper function for gather_co_po_rows_pool.
         Yields batches of CO-DO rows, preventing configuration iterator from
         being consumed all at once.
         """
         chunk_size = 1000
-        config_chunks = batched(self.configs, chunk_size)
-
+        config_chunks = batched(configs, chunk_size)
         with Pool(self.nprocs) as pool:
             while True:
                 config_batches = list(islice(config_chunks, self.nprocs))
                 if not config_batches:
                     break
                 else:
-                    yield list(self.gather_co_po_rows_pool(config_batches, pool))
+                    yield list(self.gather_co_po_rows_pool(config_batches, pool, dataset_id))
 
     def gather_co_po_in_batches_no_pool(self):
         """
@@ -1247,6 +1260,7 @@ class DataManager:
                         f"Inserted {len(po_rows)} rows into {loader.prop_object_table}"
                     )
 
+
     def load_data_to_pg_in_batches(self, loader):
         """Load data to PostgreSQL in batches."""
         co_po_rows = self.gather_co_po_in_batches()
@@ -1270,6 +1284,400 @@ class DataManager:
                     loader.prop_object_table,
                     property_object_schema,
                 )
+
+    def load_data_to_pg_in_batches_no_spark(self, configs, dataset_id=None, config_table=None, prop_object_table=None):
+        """Load data to PostgreSQL in batches."""
+        co_po_rows = self.gather_co_po_in_batches(configs, dataset_id)
+        for co_po_batch in tqdm(
+            co_po_rows,
+            desc="Loading data to database: ",
+            unit="batch",
+        ):
+            co_rows, po_rows = list(zip(*co_po_batch))
+
+            if len(co_rows) == 0:
+                continue
+            
+            # make tuple of tuples for data
+            column_headers = tuple(co_rows[0].keys())[:-1]
+            co_values = []
+            for co_row in co_rows:
+                t = []
+                for column in column_headers:
+                    val = co_row[column]
+                    if column == 'last_modified':
+                        val = val.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    #if isinstance(val, (list, tuple, dict)):
+                    #    print (column, type(val[0]))
+                    #    val = str(val)
+                    t.append(val)
+                co_values.append(t)
+            sql_co = "INSERT INTO configurations (id, hash, last_modified, dataset_ids, configuration_set_ids, chemical_formula_hill, chemical_formula_reduced, chemical_formula_anonymous, elements, elements_ratios, atomic_numbers, nsites, nelements, nperiodic_dimensions, cell, dimension_types, pbc, names, labels, metadata_id, metadata_path, metadata_size, positions_00,positions_01, positions_02, positions_03, positions_04, positions_05, positions_06, positions_07, positions_08, positions_09, positions_10, positions_11, positions_12, positions_13, positions_14, positions_15, positions_16, positions_17, positions_18, positions_19) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (hash) DO UPDATE SET dataset_ids = CASE WHEN NOT (configurations.dataset_ids[1] = ANY(configurations.dataset_ids)) THEN array_append(configurations.dataset_ids, configurations.dataset_ids[1]) ELSE configurations.dataset_ids END;"
+
+            column_headers = tuple(po_rows[0].keys())
+            po_values = []
+            for po_row in po_rows:
+                t = []
+                for column in column_headers:
+                    if column in ['cauchy_stress_volume_normalized', 'electronic_band_gap', 'electronic_band_gap_type', 'formation_energy', 'adsorption_energy', 'atomization_energy', 'metadata', 'energy_unit', 'energy_per_atom', 'atomic_forces_unit', 'cauchy_stress_unit']:
+                        pass
+                    else:
+                        val = po_row[column]
+                        if column == 'last_modified':
+                            val = val.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    #if isinstance(val, (list, tuple, dict)):
+                    #    print (column, type(val[0]))
+                    #    val = str(val)
+                        t.append(val)
+                po_values.append(t)
+
+            sql_po = """
+                INSERT INTO property_objects (id, hash, last_modified, configuration_id, dataset_id, multiplicity, metadata_id, metadata_path, metadata_size, software, method, chemical_formula_hill, energy, atomic_forces_00, atomic_forces_01, atomic_forces_02, atomic_forces_03, atomic_forces_04, atomic_forces_05, atomic_forces_06, atomic_forces_07, atomic_forces_08, atomic_forces_09, atomic_forces_10, atomic_forces_11, atomic_forces_12, atomic_forces_13, atomic_forces_14, atomic_forces_15, atomic_forces_16, atomic_forces_17, atomic_forces_18, atomic_forces_19, cauchy_stress)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,%s, %s, %s, %s, %s, %s, %s, %s,%s,%s)
+                ON CONFLICT (hash)
+                DO UPDATE SET multiplicity = property_objects.multiplicity + 1;
+
+            """
+
+
+            with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password) as conn:
+                with conn.cursor() as curs:
+                    curs.executemany(sql_co,co_values)
+                    curs.executemany(sql_po,po_values)
+
+    def create_pg_ds_table(self):
+        sql = """
+        CREATE TABLE datasets (
+        id VARCHAR (256),
+        hash VARCHAR (256) PRIMARY KEY,
+        name VARCHAR (256),
+        last_modified VARCHAR (256),
+        nconfigurations INT,
+        nproperty_objects INT,
+        nsites INT,
+        elements VARCHAR (1000) [],
+        labels VARCHAR (1000) [],
+        nelements INT,
+        total_elements_ratio DOUBLE PRECISION [],
+        nperiodic_dimensions INT [],
+        dimension_types VARCHAR (1000) [],
+        energy_count INT,
+        energy_mean DOUBLE PRECISION,
+        energy_variance DOUBLE PRECISION,
+        atomic_forces_count INT,
+        cauchy_stress_count INT,
+        authors VARCHAR (256) [],
+        description VARCHAR (10000),
+        extended_id VARCHAR (1000),
+        license VARCHAR (256),
+        links VARCHAR (1000) [],
+        publication_year VARCHAR (256),
+        doi VARCHAR (256)
+        )
+        """
+        with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password) as conn:
+            with conn.cursor() as curs:
+                curs.execute(sql)
+
+    # currently cf-kit table with some properties removed
+    def create_pg_po_table(self):
+        sql = """
+        CREATE TABLE property_objects (
+        id VARCHAR (256),
+        hash VARCHAR (256) PRIMARY KEY,
+        last_modified VARCHAR (256),
+        configuration_id VARCHAR (256),
+        dataset_id VARCHAR (256),
+        multiplicity INT,
+        metadata_id VARCHAR (256),
+        metadata_path VARCHAR (256),
+        metadata_size INT,
+        software VARCHAR (256),
+        method VARCHAR (256),
+        chemical_formula_hill VARCHAR (256),
+        energy DOUBLE PRECISION,
+        atomic_forces_00 DOUBLE PRECISION [] [],
+        atomic_forces_01 DOUBLE PRECISION [] [],
+        atomic_forces_02 DOUBLE PRECISION [] [],
+        atomic_forces_03 DOUBLE PRECISION [] [],
+        atomic_forces_04 DOUBLE PRECISION [] [],
+        atomic_forces_05 DOUBLE PRECISION [] [],
+        atomic_forces_06 DOUBLE PRECISION [] [],
+        atomic_forces_07 DOUBLE PRECISION [] [],
+        atomic_forces_08 DOUBLE PRECISION [] [],
+        atomic_forces_09 DOUBLE PRECISION [] [],
+        atomic_forces_10 DOUBLE PRECISION [] [],
+        atomic_forces_11 DOUBLE PRECISION [] [],
+        atomic_forces_12 DOUBLE PRECISION [] [],
+        atomic_forces_13 DOUBLE PRECISION [] [],
+        atomic_forces_14 DOUBLE PRECISION [] [],
+        atomic_forces_15 DOUBLE PRECISION [] [],
+        atomic_forces_16 DOUBLE PRECISION [] [],
+        atomic_forces_17 DOUBLE PRECISION [] [],
+        atomic_forces_18 DOUBLE PRECISION [] [],
+        atomic_forces_19 DOUBLE PRECISION [] [],
+        cauchy_stress DOUBLE PRECISION [] []
+        )
+        """
+
+        with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password) as conn:
+            with conn.cursor() as curs:
+                curs.execute(sql)
+
+    def create_pg_co_table(self):
+        sql = """
+        CREATE TABLE configurations (
+        id VARCHAR (256),
+        hash VARCHAR (256) PRIMARY KEY,
+        last_modified VARCHAR (256),
+        dataset_ids VARCHAR (256) [],
+        configuration_set_ids VARCHAR (256) [],
+        chemical_formula_hill VARCHAR (256),
+        chemical_formula_reduced VARCHAR (256),
+        chemical_formula_anonymous VARCHAR (256),
+        elements VARCHAR (256) [],
+        elements_ratios DOUBLE PRECISION [],
+        atomic_numbers INT [],
+        nsites INT,
+        nelements INT,
+        nperiodic_dimensions INT,
+        cell DOUBLE PRECISION [] [],
+        dimension_types INT [],
+        pbc BOOL[],
+        names VARCHAR (256) [],
+        labels VARCHAR (256) [],
+        metadata_id VARCHAR (256),
+        metadata_path VARCHAR (256),
+        metadata_size INT,
+        positions_00 DOUBLE PRECISION [][],
+        positions_01 DOUBLE PRECISION [][],
+        positions_02 DOUBLE PRECISION [][],
+        positions_03 DOUBLE PRECISION [][],
+        positions_04 DOUBLE PRECISION [][],
+        positions_05 DOUBLE PRECISION [][],
+        positions_06 DOUBLE PRECISION [][],
+        positions_07 DOUBLE PRECISION [][],
+        positions_08 DOUBLE PRECISION [][],
+        positions_09 DOUBLE PRECISION [][],
+        positions_10 DOUBLE PRECISION [][],
+        positions_11 DOUBLE PRECISION [][],
+        positions_12 DOUBLE PRECISION [][],
+        positions_13 DOUBLE PRECISION [][],
+        positions_14 DOUBLE PRECISION [][],
+        positions_15 DOUBLE PRECISION [][],
+        positions_16 DOUBLE PRECISION [][],
+        positions_17 DOUBLE PRECISION [][],
+        positions_18 DOUBLE PRECISION [][],
+        positions_19 DOUBLE PRECISION [][]
+        )
+        """
+        with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password) as conn:
+            with conn.cursor() as curs:
+                curs.execute(sql)
+
+    def insert_data_and_create_datset(self,        
+        configs,
+        name: str,
+        authors: list[str],
+        description: str,
+        publication_link: str = None,
+        data_link: str = None,
+        dataset_id: str = None,
+        other_links: list[str] = None,
+        publication_year: str = None,
+        doi: str = None,
+        labels: list[str] = None,
+        data_license: str = "CC-BY-4.0",
+        config_table=None,
+        prop_object_table=None,
+        ):
+
+        if dataset_id is None:
+            dataset_id = generate_ds_id()
+
+        self.load_data_to_pg_in_batches_no_spark(configs, dataset_id, config_table, prop_object_table)
+        self.create_dataset_pg_no_spark(
+            name,
+            dataset_id,
+            authors,
+            publication_link,
+            data_link,
+            description,
+            other_links,
+            publication_year,
+            doi,
+            labels,
+            data_license,
+        )
+        return dataset_id
+
+    def create_dataset_pg_no_spark(self,
+        name: str,
+        dataset_id: str,
+        authors: list[str],
+        publication_link: str,
+        data_link: str,
+        description: str,
+        other_links: list[str] = None,
+        publication_year: str = None,
+        doi: str = None,
+        labels: list[str] = None,
+        data_license: str = "CC-BY-4.0",
+    ):
+        # find cs_ids, co_ids, and pi_ids
+        config_df = dataset_query_pg(self.dataset_id, 'configurations')
+        prop_df = dataset_query_pg(self.dataset_id, 'property_objects')
+
+        ds = Dataset(
+            name=name,
+            authors=authors,
+            config_df=config_df,
+            prop_df=prop_df,
+            publication_link=publication_link,
+            data_link=data_link,
+            description=description,
+            other_links=other_links,
+            dataset_id=dataset_id,
+            labels=labels,
+            doi=doi,
+            data_license=data_license,
+            configuration_set_ids=None,
+            publication_year=publication_year,
+            use_pg = True,
+        )
+        row = ds.spark_row
+
+        sql = """
+            INSERT INTO datasets (last_modified, nconfigurations, nproperty_objects, nsites, nelements, elements, total_elements_ratio, nperiodic_dimensions, dimension_types, energy_mean, energy_variance, atomic_forces_count, cauchy_stress_count, energy_count, authors, description, license, links, name, publication_year, doi, id, extended_id, hash, labels)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,%s, %s)
+            ON CONFLICT (hash)
+            DO NOTHING
+        """
+        
+        column_headers = tuple(row.keys())
+        values = []
+        t = []
+        for column in column_headers:
+            if column in ['nconfiguration_sets']:
+                pass
+            else:
+                val = row[column]
+                if column == 'last_modified':
+                    val = val.strftime("%Y-%m-%dT%H:%M:%SZ")
+                t.append(val)
+            values.append(t)
+
+
+        with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password) as conn:
+            with conn.cursor() as curs:
+                curs.executemany(sql, values)
+
+    def update_dataset_pg_no_spark(self, configs, dataset_id):
+        # update dataset_id
+        v_no = dataset_id.split('_')[-1]
+        new_v_no = int(v_no) + 1
+        dataset_id = dataset_id.split('_')[0] + '_' + dataset_id.split('_')[1] + '_' + str(new_v_no)
+        
+        self.load_data_to_pg_in_batches_no_spark(configs, dataset_id)
+
+        config_df_1 = dataset_query_pg(dataset_id, 'configurations')
+        prop_df_1 = dataset_query_pg(dataset_id, 'property_objects')
+        
+        config_df_2 = dataset_query_pg(self.dataset_id, 'configurations')
+        prop_df_2 = dataset_query_pg(self.dataset_id, 'property_objects')
+
+        config_df_1.extend(config_df_2)
+        prop_df_1.extend(prop_df_2)
+
+        old_ds = get_dataset_pg(dataset_id)[0]
+
+        # format links
+        s = old_ds['links'][0].split(' ')[-1].replace("'","")
+        d = old_ds['links'][1].split(' ')[-1].replace("'","")
+        o = old_ds['links'][2].split(' ')[-1].replace("'","")
+
+
+        ds = Dataset(
+            name=old_ds['name'],
+            authors=old_ds['authors'],
+            config_df=config_df_1,
+            prop_df=prop_df_1,
+            publication_link=s,
+            data_link=d,
+            description=old_ds['description'],
+            other_links=o,
+            dataset_id=dataset_id,
+            labels=old_ds['labels'],
+            doi=old_ds['doi'],
+            data_license=old_ds['license'],
+            # TODO handle cs later
+            configuration_set_ids=None,
+            publication_year=old_ds['publication_year'],
+            use_pg = True,
+        )
+        row = ds.spark_row
+
+        sql = """
+            INSERT INTO datasets (last_modified, nconfigurations, nproperty_objects, nsites, nelements, elements, total_elements_ratio, nperiodic_dimensions, dimension_types, energy_mean, energy_variance, atomic_forces_count, cauchy_stress_count, energy_count, authors, description, license, links, name, publication_year, doi, id, extended_id, hash, labels)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,%s, %s)
+            ON CONFLICT (hash)
+            DO NOTHING
+        """
+
+        column_headers = tuple(row.keys())
+        values = []
+        t = []
+        for column in column_headers:
+            if column in ['nconfiguration_sets']:
+                pass
+            else:
+                val = row[column]
+                if column == 'last_modified':
+                    val = val.strftime("%Y-%m-%dT%H:%M:%SZ")
+                t.append(val)
+            values.append(t)
+
+
+        with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password) as conn:
+            with conn.cursor() as curs:
+                curs.executemany(sql, values)
+        return dataset_id
+
+    def dataset_query_pg(self,
+        dataset_id=None,
+        table_name=None,
+    ):      
+        if table_name == 'configurations':
+            sql = f"""
+                SELECT *
+                FROM {table_name}
+                WHERE '{dataset_id}' = ANY(dataset_ids);
+            """
+        elif table_name == 'property_objects':
+            sql = f"""
+                SELECT *
+                FROM {table_name}
+                WHERE dataset_id = '{dataset_id}';
+            """
+        else:
+            raise Exception('Only configurations and property_objects tables are supported')
+            
+        with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password, row_factory=dict_row) as conn:
+            with conn.cursor() as curs:
+                r = curs.execute(sql)
+                return curs.fetchall()
+            
+    def get_dataset_pg(self, dataset_id):
+        sql = f"""
+                SELECT *
+                FROM datasets
+                WHERE id = '{dataset_id}';
+            """ 
+            
+        with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password, row_factory=dict_row) as conn:
+            with conn.cursor() as curs:
+                r = curs.execute(sql)
+                return curs.fetchall()
 
     def create_configuration_sets(
         self,
@@ -1458,6 +1866,17 @@ class DataManager:
         )
         ds_df = loader.spark.createDataFrame([ds.spark_row], schema=dataset_df_schema)
         loader.write_table(ds_df, loader.dataset_table)
+    
+    def delete_dataset(self, dataset_id):
+        sql = """
+            DELETE
+            FROM datasets
+            WHERE id = {dataset_id};
+        """
+        # TODO: delete children as well
+        with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password) as conn:
+            with conn.cursor() as curs:
+                curs.execute(sql)
 
 
 class S3BatchManager:
@@ -1554,7 +1973,7 @@ class S3FileManager:
 def generate_ds_id():
     # Maybe check to see whether the DS ID already exists?
     ds_id = ID_FORMAT_STRING.format("DS", generate_string(), 0)
-    print("Generated new DS ID:", ds_id)
+    #print("Generated new DS ID:", ds_id)
     return ds_id
 
 
@@ -1606,3 +2025,41 @@ def read_md_partition(partition, config):
         return Row(**rowdict)
 
     return map(process_row, partition)
+
+
+def dataset_query_pg(
+    dataset_id=None,
+    table_name=None,
+):
+    if table_name == 'configurations':
+        sql = f"""
+            SELECT *
+            FROM {table_name}
+            WHERE '{dataset_id}' = ANY(dataset_ids);
+        """
+    elif table_name == 'property_objects':
+        sql = f"""
+            SELECT *
+            FROM {table_name}
+            WHERE dataset_id = '{dataset_id}';
+        """
+    else:
+        raise Exception('Only configurations and property_objects tables are supported')
+
+    with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password,row_factory=dict_row) as conn:
+        with conn.cursor() as curs:
+            r = curs.execute(sql)
+            return curs.fetchall()
+
+def get_dataset_pg(dataset_id):
+    sql = f"""
+            SELECT *
+            FROM datasets
+            WHERE id = '{dataset_id}';
+        """
+
+    with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password,row_factory=dict_row) as conn:
+        with conn.cursor() as curs:
+            r = curs.execute(sql)
+            return curs.fetchall()
+

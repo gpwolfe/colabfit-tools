@@ -10,6 +10,8 @@ from colabfit import MAX_STRING_LENGTH
 from colabfit.tools.schema import dataset_schema
 from colabfit.tools.utilities import ELEMENT_MAP, _empty_dict_from_schema, _hash
 
+import numpy as np
+
 
 class Dataset:
     """
@@ -86,6 +88,7 @@ class Dataset:
         configuration_set_ids: list[str] = [],
         data_license: str = "CC-BY-ND-4.0",
         publication_year: str = None,
+        use_pg: bool = False,
     ):
         for auth in authors:
             if not "".join(auth.split(" ")[-1].replace("-", "")).isalpha():
@@ -107,7 +110,10 @@ class Dataset:
         self.configuration_set_ids = configuration_set_ids
         if self.configuration_set_ids is None:
             self.configuration_set_ids = []
-        self.spark_row = self.to_spark_row(config_df=config_df, prop_df=prop_df)
+        if use_pg:
+            self.spark_row = self._from_pg(configs=config_df, props=prop_df)
+        else:
+            self.spark_row = self.to_spark_row(config_df=config_df, prop_df=prop_df)
 
         self.spark_row["id"] = self.dataset_id
         # if dataset_id is None:
@@ -126,7 +132,76 @@ class Dataset:
         self._hash = _hash(self.spark_row, ["extended_id"])
         self.spark_row["hash"] = str(self._hash)
         self.spark_row["labels"] = labels
-        print(self.spark_row)
+        
+    # aggregate stuff
+    def _from_pg(self, configs, props):
+        row_dict = {}
+        row_dict["last_modified"] = dateutil.parser.parse(
+            datetime.datetime.now(tz=datetime.timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            ))
+        row_dict["nconfiguration_sets"] = len(self.configuration_set_ids)
+        row_dict['nconfigurations'] = len(configs)
+        row_dict['nproperty_objects'] = len(props)
+        nsites = 0
+        nperiodic_dimensions = set()
+        dimension_types = set()
+        element_dict = {} 
+
+        for c in configs:
+            nsites += c['nsites']
+            for e in c['atomic_numbers']:
+                e = ELEMENT_MAP[e] 
+                if e in element_dict:
+                    element_dict[e] += 1
+                else:
+                    element_dict[e] = 1
+            nperiodic_dimensions.add(c['nperiodic_dimensions'])
+            dimension_types.add(str(c['dimension_types']))
+
+        sorted_elements = sorted(list(element_dict.keys()))
+
+        row_dict['nsites'] = nsites
+        row_dict['nelements'] = len(sorted_elements)
+        row_dict['elements'] = sorted_elements
+        row_dict['total_elements_ratio'] = [element_dict[e] / nsites for e in sorted_elements]
+        row_dict['nperiodic_dimensions'] = list(nperiodic_dimensions)
+        row_dict['dimension_types'] = list(dimension_types)
+
+        forces = 0
+        stress = 0
+        energy = 0
+        energies = [] 
+        for p in props:
+            if p["atomic_forces_00"] is not None:
+                forces += 1
+            if p["cauchy_stress"] is not None:
+                stress += 1
+            if p["energy"] is not None:
+                energy += 1
+                energies.append(p["energy"])
+
+        row_dict['energy_mean'] = np.mean(energies)
+        row_dict['energy_variance'] = np.var(energies)
+        row_dict['atomic_forces_count'] = forces
+        row_dict['cauchy_stress_count'] = stress
+        row_dict['energy_count'] = energy
+
+        row_dict["authors"] = self.authors
+        row_dict["description"] = self.description
+        row_dict["license"] = self.data_license
+        row_dict["links"] = str(
+            {
+                "source-publication": self.publication_link,
+                "source-data": self.data_link,
+                "other": self.other_links,
+            }
+        )
+        row_dict["name"] = self.name
+        row_dict["publication_year"] = self.publication_year
+        row_dict["doi"] = self.doi
+
+        return row_dict
 
     def to_spark_row(self, config_df, prop_df):
         """"""
