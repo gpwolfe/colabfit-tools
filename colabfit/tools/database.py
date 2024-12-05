@@ -1616,7 +1616,6 @@ class DataManager:
         prop_df_1.extend(prop_df_2)
         
         old_ds = self.get_dataset_pg(dataset_id)[0]
-        print ('old_ds',old_ds)
 
         # format links
         s = old_ds['links'][0].split(' ')[-1].replace("'","")
