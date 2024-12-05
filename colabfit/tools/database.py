@@ -15,12 +15,12 @@ import dateutil.parser
 import findspark
 import psycopg
 from psycopg.rows import dict_row
-import pyarrow as pa
-import pyspark.sql.functions as sf
+#import pyarrow as pa
+#import pyspark.sql.functions as sf
 from botocore.exceptions import ClientError
 from django.utils.crypto import get_random_string
-from dotenv import load_dotenv
-from ibis import _
+#from dotenv import load_dotenv
+#from ibis import _
 from pyspark.sql import Row, SparkSession
 from pyspark.sql.types import (
     ArrayType,
@@ -32,7 +32,8 @@ from pyspark.sql.types import (
     TimestampType,
 )
 from tqdm import tqdm
-from vastdb.session import Session
+#from vastdb.session import Session
+from ase import Atoms
 
 from colabfit import (
     ID_FORMAT_STRING,
@@ -41,6 +42,7 @@ from colabfit.tools.configuration import AtomicConfiguration
 from colabfit.tools.configuration_set import ConfigurationSet
 from colabfit.tools.dataset import Dataset
 from colabfit.tools.property import Property
+from colabfit.tools.property_definitions import atomic_forces_pd, energy_pd, cauchy_stress_pd
 from pyspark.sql.functions import udf
 from pyspark.sql.types import StringType
 from colabfit.tools.schema import (
@@ -83,7 +85,7 @@ _MAX_STRING_LEN = 60000
 def generate_string():
     return get_random_string(12, allowed_chars=string.ascii_lowercase + "1234567890")
 
-
+'''
 class VastDataLoader:
     def __init__(
         self,
@@ -1002,7 +1004,7 @@ class PGDataLoader:
     #             # (cs_id, co_ids),
     #         )
     #         conn.commit()
-
+'''
 
 def batched(configs, n):
     "Batch data into tuples of length n. The last batch may be shorter."
@@ -1025,8 +1027,8 @@ class DataManager:
         password=None,
         nprocs: int = 1,
         # configs: list[AtomicConfiguration] = None,
-        prop_defs: list[dict] = None,
-        prop_map: dict = None,
+        prop_defs: list[dict] = [atomic_forces_pd, energy_pd, cauchy_stress_pd,],
+        #prop_map: dict = None,
         # dataset_id=None,
         standardize_energy: bool = True,
         read_write_batch_size=10000,
@@ -1036,12 +1038,13 @@ class DataManager:
         self.port = port
         self.user = user
         self.password = password
+        self.host = host
         # self.configs = configs
         if isinstance(prop_defs, dict):
             prop_defs = [prop_defs]
         self.prop_defs = prop_defs
         self.read_write_batch_size = read_write_batch_size
-        self.prop_map = prop_map
+        #self.prop_map = prop_map
         self.nprocs = nprocs
         # self.dataset_id = dataset_id
         self.standardize_energy = standardize_energy
@@ -1076,7 +1079,7 @@ class DataManager:
         return co_po_rows
 
     def gather_co_po_rows_pool(
-        self, config_chunks: list[list[AtomicConfiguration]], pool, dataset_id=None
+        self, config_chunks: list[list[AtomicConfiguration]], pool, dataset_id=None, prop_map=None,
     ):
         """
         Wrapper for _gather_co_po_rows.
@@ -1090,13 +1093,13 @@ class DataManager:
         part_gather = partial(
             self._gather_co_po_rows,
             prop_defs=self.prop_defs,
-            prop_map=self.prop_map,
+            prop_map=prop_map,
             dataset_id=dataset_id,
             standardize_energy=self.standardize_energy,
         )
         return itertools.chain.from_iterable(pool.map(part_gather, list(config_chunks)))
 
-    def gather_co_po_in_batches(self, configs, dataset_id=None):
+    def gather_co_po_in_batches(self, configs, dataset_id=None, prop_map=None):
         """
         Wrapper function for gather_co_po_rows_pool.
         Yields batches of CO-DO rows, preventing configuration iterator from
@@ -1110,9 +1113,9 @@ class DataManager:
                 if not config_batches:
                     break
                 else:
-                    yield list(self.gather_co_po_rows_pool(config_batches, pool, dataset_id))
+                    yield list(self.gather_co_po_rows_pool(config_batches, pool, dataset_id, prop_map))
 
-    def gather_co_po_in_batches_no_pool(self):
+    def gather_co_po_in_batches_no_pool(self, prop_map=None):
         """
         Wrapper function for gather_co_po_rows_pool.
         Yields batches of CO-DO rows, preventing configuration iterator from
@@ -1124,7 +1127,7 @@ class DataManager:
             yield list(
                 self._gather_co_po_rows(
                     self.prop_defs,
-                    self.prop_map,
+                    prop_map,
                     self.dataset_id,
                     chunk,
                     standardize_energy=self.standardize_energy,
@@ -1285,9 +1288,9 @@ class DataManager:
                     property_object_schema,
                 )
 
-    def load_data_to_pg_in_batches_no_spark(self, configs, dataset_id=None, config_table=None, prop_object_table=None):
+    def load_data_to_pg_in_batches_no_spark(self, configs, dataset_id=None, config_table=None, prop_object_table=None, prop_map=None):
         """Load data to PostgreSQL in batches."""
-        co_po_rows = self.gather_co_po_in_batches(configs, dataset_id)
+        co_po_rows = self.gather_co_po_in_batches(configs, dataset_id, prop_map)
         for co_po_batch in tqdm(
             co_po_rows,
             desc="Loading data to database: ",
@@ -1311,8 +1314,10 @@ class DataManager:
                     #    print (column, type(val[0]))
                     #    val = str(val)
                     t.append(val)
+                t.append(co_row['dataset_ids'][0])
+                t.append(co_row['dataset_ids'][0])
                 co_values.append(t)
-            sql_co = "INSERT INTO configurations (id, hash, last_modified, dataset_ids, configuration_set_ids, chemical_formula_hill, chemical_formula_reduced, chemical_formula_anonymous, elements, elements_ratios, atomic_numbers, nsites, nelements, nperiodic_dimensions, cell, dimension_types, pbc, names, labels, metadata_id, metadata_path, metadata_size, positions_00,positions_01, positions_02, positions_03, positions_04, positions_05, positions_06, positions_07, positions_08, positions_09, positions_10, positions_11, positions_12, positions_13, positions_14, positions_15, positions_16, positions_17, positions_18, positions_19) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (hash) DO UPDATE SET dataset_ids = CASE WHEN NOT (configurations.dataset_ids[1] = ANY(configurations.dataset_ids)) THEN array_append(configurations.dataset_ids, configurations.dataset_ids[1]) ELSE configurations.dataset_ids END;"
+            sql_co = "INSERT INTO configurations (id, hash, last_modified, dataset_ids, configuration_set_ids, chemical_formula_hill, chemical_formula_reduced, chemical_formula_anonymous, elements, elements_ratios, atomic_numbers, nsites, nelements, nperiodic_dimensions, cell, dimension_types, pbc, names, labels, metadata_id, metadata_path, metadata_size, positions_00,positions_01, positions_02, positions_03, positions_04, positions_05, positions_06, positions_07, positions_08, positions_09, positions_10, positions_11, positions_12, positions_13, positions_14, positions_15, positions_16, positions_17, positions_18, positions_19) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (hash) DO UPDATE SET dataset_ids = CASE WHEN NOT (%s = ANY(configurations.dataset_ids)) THEN array_append(configurations.dataset_ids, %s) ELSE configurations.dataset_ids END;"
 
             column_headers = tuple(po_rows[0].keys())
             po_values = []
@@ -1338,7 +1343,6 @@ class DataManager:
                 DO UPDATE SET multiplicity = property_objects.multiplicity + 1;
 
             """
-
 
             with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password) as conn:
                 with conn.cursor() as curs:
@@ -1490,12 +1494,23 @@ class DataManager:
         data_license: str = "CC-BY-4.0",
         config_table=None,
         prop_object_table=None,
+        prop_map=None,
         ):
 
         if dataset_id is None:
             dataset_id = generate_ds_id()
 
-        self.load_data_to_pg_in_batches_no_spark(configs, dataset_id, config_table, prop_object_table)
+        # convert to CF AtomicConfiguration if not already
+        converted_configs = []
+        for c in configs:
+            if isinstance(c, Atoms):
+                converted_configs.append(AtomicConfiguration.from_ase(c))
+            elif isinstance(c, AtomicConfiguration):
+                converted_configs.append(c)
+            else:
+                raise Exception("Configs must be an instance of either ase.Atoms or AtomicConfiguration")
+
+        self.load_data_to_pg_in_batches_no_spark(converted_configs, dataset_id, config_table, prop_object_table, prop_map)
         self.create_dataset_pg_no_spark(
             name,
             dataset_id,
@@ -1525,9 +1540,11 @@ class DataManager:
         data_license: str = "CC-BY-4.0",
     ):
         # find cs_ids, co_ids, and pi_ids
-        config_df = dataset_query_pg(self.dataset_id, 'configurations')
-        prop_df = dataset_query_pg(self.dataset_id, 'property_objects')
+        config_df = self.dataset_query_pg(dataset_id, 'configurations')
+        prop_df = self.dataset_query_pg(dataset_id, 'property_objects')
 
+        if isinstance(authors, str):
+            authors = [authors]
         ds = Dataset(
             name=name,
             authors=authors,
@@ -1572,24 +1589,34 @@ class DataManager:
             with conn.cursor() as curs:
                 curs.executemany(sql, values)
 
-    def update_dataset_pg_no_spark(self, configs, dataset_id):
+    def update_dataset_pg_no_spark(self, configs, dataset_id, prop_map):
+        # convert to CF AtomicConfiguration if not already
+        converted_configs = []
+        for c in configs:
+            if isinstance(c, Atoms):
+                converted_configs.append(AtomicConfiguration.from_ase(c))
+            elif isinstance(c, AtomicConfiguration):
+                converted_configs.append(c)
+            else:
+                raise Exception("Configs must be an instance of either ase.Atoms or AtomicConfiguration")
         # update dataset_id
         v_no = dataset_id.split('_')[-1]
         new_v_no = int(v_no) + 1
-        dataset_id = dataset_id.split('_')[0] + '_' + dataset_id.split('_')[1] + '_' + str(new_v_no)
+        new_dataset_id = dataset_id.split('_')[0] + '_' + dataset_id.split('_')[1] + '_' + str(new_v_no)
         
-        self.load_data_to_pg_in_batches_no_spark(configs, dataset_id)
+        self.load_data_to_pg_in_batches_no_spark(converted_configs, new_dataset_id, prop_map=prop_map)
 
-        config_df_1 = dataset_query_pg(dataset_id, 'configurations')
-        prop_df_1 = dataset_query_pg(dataset_id, 'property_objects')
+        config_df_1 = self.dataset_query_pg(dataset_id, 'configurations')
+        prop_df_1 = self.dataset_query_pg(dataset_id, 'property_objects')
         
-        config_df_2 = dataset_query_pg(self.dataset_id, 'configurations')
-        prop_df_2 = dataset_query_pg(self.dataset_id, 'property_objects')
+        config_df_2 = self.dataset_query_pg(new_dataset_id, 'configurations')
+        prop_df_2 = self.dataset_query_pg(new_dataset_id, 'property_objects')
 
         config_df_1.extend(config_df_2)
         prop_df_1.extend(prop_df_2)
-
-        old_ds = get_dataset_pg(dataset_id)[0]
+        
+        old_ds = self.get_dataset_pg(dataset_id)[0]
+        print ('old_ds',old_ds)
 
         # format links
         s = old_ds['links'][0].split(' ')[-1].replace("'","")
@@ -1606,7 +1633,7 @@ class DataManager:
             data_link=d,
             description=old_ds['description'],
             other_links=o,
-            dataset_id=dataset_id,
+            dataset_id=new_dataset_id,
             labels=old_ds['labels'],
             doi=old_ds['doi'],
             data_license=old_ds['license'],
@@ -1641,7 +1668,31 @@ class DataManager:
         with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password) as conn:
             with conn.cursor() as curs:
                 curs.executemany(sql, values)
-        return dataset_id
+                return new_dataset_id
+
+    def get_dataset_data(self, dataset_id):
+        sql=f"""
+        SELECT
+            c.*,  
+            po.* 
+        FROM
+            (SELECT * FROM configurations WHERE '{dataset_id}' = ANY(dataset_ids)) c
+        INNER JOIN
+            (SELECT * FROM property_objects WHERE dataset_id = '{dataset_id}') po
+        ON
+            c.id = po.configuration_id;
+        """
+        with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password, row_factory=dict_row) as conn:
+            with conn.cursor() as curs:
+                curs.execute(sql)
+                table = curs.fetchall()
+                return table
+
+    def general_query(self, sql):
+        with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password, row_factory=dict_row) as conn:
+            with conn.cursor() as curs:
+                curs.execute(sql)
+                return curs.fetchall()
 
     def dataset_query_pg(self,
         dataset_id=None,
@@ -1673,7 +1724,7 @@ class DataManager:
                 FROM datasets
                 WHERE id = '{dataset_id}';
             """ 
-            
+        print (dataset_id)    
         with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password, row_factory=dict_row) as conn:
             with conn.cursor() as curs:
                 r = curs.execute(sql)
@@ -1871,12 +1922,12 @@ class DataManager:
         sql = """
             DELETE
             FROM datasets
-            WHERE id = {dataset_id};
+            WHERE id = %s;
         """
         # TODO: delete children as well
         with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password) as conn:
             with conn.cursor() as curs:
-                curs.execute(sql)
+                curs.execute(sql, (dataset_id,))
 
 
 class S3BatchManager:
@@ -1976,7 +2027,7 @@ def generate_ds_id():
     #print("Generated new DS ID:", ds_id)
     return ds_id
 
-
+'''
 @sf.udf(returnType=StringType())
 def prepend_path_udf(prefix, md_path):
     try:
@@ -1985,7 +2036,7 @@ def prepend_path_udf(prefix, md_path):
     except ValueError:
         full_path = Path(prefix) / md_path
         return str(full_path)
-
+'''
 
 # def write_md_partition(partition, config):
 #     s3_mgr = S3FileManager(
@@ -2026,7 +2077,7 @@ def read_md_partition(partition, config):
 
     return map(process_row, partition)
 
-
+'''
 def dataset_query_pg(
     dataset_id=None,
     table_name=None,
@@ -2062,4 +2113,4 @@ def get_dataset_pg(dataset_id):
         with conn.cursor() as curs:
             r = curs.execute(sql)
             return curs.fetchall()
-
+'''

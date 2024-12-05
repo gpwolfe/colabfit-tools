@@ -5,7 +5,7 @@ from ast import literal_eval
 from hashlib import sha512
 
 import numpy as np
-import pyarrow as pa
+#import pyarrow as pa
 from pyspark.sql import Row
 from pyspark.sql import functions as sf
 from pyspark.sql.types import (

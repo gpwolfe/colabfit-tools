@@ -2,12 +2,12 @@ import datetime
 import warnings
 
 import dateutil
-import pyspark.sql.functions as sf
-from pyspark.sql.types import StringType
+#import pyspark.sql.functions as sf
+#from pyspark.sql.types import StringType
 from unidecode import unidecode
 
 from colabfit import MAX_STRING_LENGTH
-from colabfit.tools.schema import dataset_schema
+#from colabfit.tools.schema import dataset_schema
 from colabfit.tools.utilities import ELEMENT_MAP, _empty_dict_from_schema, _hash
 
 import numpy as np

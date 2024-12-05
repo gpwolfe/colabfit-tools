@@ -2,10 +2,10 @@ from datetime import datetime
 from hashlib import sha512
 
 import dateutil.parser
-from pyspark.sql import functions as sf
-from pyspark.sql.types import StringType
+#from pyspark.sql import functions as sf
+#from pyspark.sql.types import StringType
 
-from colabfit.tools.schema import configuration_set_schema
+#from colabfit.tools.schema import configuration_set_schema
 from colabfit.tools.utilities import ELEMENT_MAP, _empty_dict_from_schema
 
 
