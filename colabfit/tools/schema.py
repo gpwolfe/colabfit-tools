@@ -84,6 +84,7 @@ property_object_df_schema = StructType(
         StructField("adsorption_energy", DoubleType(), True),
         StructField("atomization_energy", DoubleType(), True),
     ]
+    # TODO: Add schema associated with new properties: selection/descriptor
 )
 
 property_object_schema = get_stringified_schema(property_object_df_schema)

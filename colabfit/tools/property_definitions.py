@@ -199,3 +199,51 @@ band_gap_pd = {
         "description": "The type of band gap calculation: [direct, indirect, unknown].",
     },
 }
+
+quests_descriptor_pd = {
+            "property-id": "tag:staff@noreply.colabfit.org,2024-12-09:property/quests-descriptor",
+            "property-name": 'quests-descriptor',
+            "property-title": "QUESTS descriptor",
+            "property-description": "The concatenation of a list of sorted"
+            "neighbor distances and average triplet bond lengths",
+
+            "descriptors": {  # example: (N,D) arrays
+                "type": "float",
+                "has-unit": False,
+                "extent": [":", ":"],
+                "required": True,
+                "description": "The per-atom descriptors. N is equal to"
+                "the number of atoms and D is (2*num-nearest-neighbors)-1",
+            },
+            "num-nearest-neighbors": {  # example: 32
+                "type": "int",
+                "has-unit": False,
+                "extent": [],
+                "required": True,
+                "description": "The number of nearest neighbors "
+                "included in the calculation. Determines the dimensionality "
+                "of the quests descriptor: (2*num-nearest-neighbors)-1",
+            },
+            "cutoff": {  # example: 5.0
+                "type": "float",
+                "has-unit": True,
+                "extent": [],
+                "required": True,
+                "description": "The cutoff distance in calculation",
+            },
+        }
+
+mask_selection_pd = {
+            "property-id": "tag:staff@noreply.colabfit.org,2024-12-09:property/mask-selection",
+            "property-name": 'mask-selection',
+            "property-title": "Mask selection",
+            "property-description": "List of bools determining if atom is selected or not",
+
+            "mask-selection": { 
+                "type": "bool",
+                "has-unit": False,
+                "extent": [":"],
+                "required": True,
+                "description": "The per-atom selection",
+            },
+        }

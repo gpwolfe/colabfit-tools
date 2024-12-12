@@ -1,4 +1,6 @@
 import datetime
+import hashlib
+import json
 import itertools
 import os
 import string
@@ -42,7 +44,7 @@ from colabfit.tools.configuration import AtomicConfiguration
 from colabfit.tools.configuration_set import ConfigurationSet
 from colabfit.tools.dataset import Dataset
 from colabfit.tools.property import Property
-from colabfit.tools.property_definitions import atomic_forces_pd, energy_pd, cauchy_stress_pd
+from colabfit.tools.property_definitions import atomic_forces_pd, energy_pd, cauchy_stress_pd, quests_descriptor_pd, mask_selection_pd
 from pyspark.sql.functions import udf
 from pyspark.sql.types import StringType
 from colabfit.tools.schema import (
@@ -1027,7 +1029,7 @@ class DataManager:
         password=None,
         nprocs: int = 1,
         # configs: list[AtomicConfiguration] = None,
-        prop_defs: list[dict] = [atomic_forces_pd, energy_pd, cauchy_stress_pd,],
+        #prop_defs: list[dict] = [atomic_forces_pd, energy_pd, cauchy_stress_pd, quests_descriptor_pd, mask_selection_pd],
         #prop_map: dict = None,
         # dataset_id=None,
         standardize_energy: bool = True,
@@ -1042,7 +1044,7 @@ class DataManager:
         # self.configs = configs
         if isinstance(prop_defs, dict):
             prop_defs = [prop_defs]
-        self.prop_defs = prop_defs
+        #self.prop_defs = prop_defs
         self.read_write_batch_size = read_write_batch_size
         #self.prop_map = prop_map
         self.nprocs = nprocs
@@ -1062,12 +1064,15 @@ class DataManager:
     ):
         """Convert COs and DOs to Spark rows."""
         co_po_rows = []
+        po_schema = self.get_table_schema('property_objects')
         for config in configs:
             config.set_dataset_id(dataset_id)
+            # TODO: Add PO schema as input to this method so to_spark_row works better
             property = Property.from_definition(
                 definitions=prop_defs,
                 configuration=config,
                 property_map=prop_map,
+                schema=po_schema,
                 standardize_energy=standardize_energy,
             )
             co_po_rows.append(
@@ -1092,7 +1097,7 @@ class DataManager:
 
         part_gather = partial(
             self._gather_co_po_rows,
-            prop_defs=self.prop_defs,
+            prop_defs=self.get_property_definitions(),
             prop_map=prop_map,
             dataset_id=dataset_id,
             standardize_energy=self.standardize_energy,
@@ -1126,7 +1131,7 @@ class DataManager:
         for chunk in config_chunks:
             yield list(
                 self._gather_co_po_rows(
-                    self.prop_defs,
+                    self.get_property_definitions(),
                     prop_map,
                     self.dataset_id,
                     chunk,
@@ -1318,10 +1323,12 @@ class DataManager:
                 t.append(co_row['dataset_ids'][0])
                 co_values.append(t)
             sql_co = "INSERT INTO configurations (id, hash, last_modified, dataset_ids, configuration_set_ids, chemical_formula_hill, chemical_formula_reduced, chemical_formula_anonymous, elements, elements_ratios, atomic_numbers, nsites, nelements, nperiodic_dimensions, cell, dimension_types, pbc, names, labels, metadata_id, metadata_path, metadata_size, positions_00,positions_01, positions_02, positions_03, positions_04, positions_05, positions_06, positions_07, positions_08, positions_09, positions_10, positions_11, positions_12, positions_13, positions_14, positions_15, positions_16, positions_17, positions_18, positions_19) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (hash) DO UPDATE SET dataset_ids = CASE WHEN NOT (%s = ANY(configurations.dataset_ids)) THEN array_append(configurations.dataset_ids, %s) ELSE configurations.dataset_ids END;"
-
+          
+            # TODO: Probably won't need this after changing how po_rows are constructed
             column_headers = tuple(po_rows[0].keys())
             po_values = []
             for po_row in po_rows:
+                print (po_row)
                 t = []
                 for column in column_headers:
                     if column in ['cauchy_stress_volume_normalized', 'electronic_band_gap', 'electronic_band_gap_type', 'formation_energy', 'adsorption_energy', 'atomization_energy', 'metadata', 'energy_unit', 'energy_per_atom', 'atomic_forces_unit', 'cauchy_stress_unit']:
@@ -1335,7 +1342,7 @@ class DataManager:
                     #    val = str(val)
                         t.append(val)
                 po_values.append(t)
-
+            # TODO: get column names from query and ensure len matches values
             sql_po = """
                 INSERT INTO property_objects (id, hash, last_modified, configuration_id, dataset_id, multiplicity, metadata_id, metadata_path, metadata_size, software, method, chemical_formula_hill, energy, atomic_forces_00, atomic_forces_01, atomic_forces_02, atomic_forces_03, atomic_forces_04, atomic_forces_05, atomic_forces_06, atomic_forces_07, atomic_forces_08, atomic_forces_09, atomic_forces_10, atomic_forces_11, atomic_forces_12, atomic_forces_13, atomic_forces_14, atomic_forces_15, atomic_forces_16, atomic_forces_17, atomic_forces_18, atomic_forces_19, cauchy_stress)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,%s, %s, %s, %s, %s, %s, %s, %s,%s,%s)
@@ -1393,11 +1400,7 @@ class DataManager:
         configuration_id VARCHAR (256),
         dataset_id VARCHAR (256),
         multiplicity INT,
-        metadata_id VARCHAR (256),
-        metadata_path VARCHAR (256),
-        metadata_size INT,
-        software VARCHAR (256),
-        method VARCHAR (256),
+        metadata VARCHAR (10000),
         chemical_formula_hill VARCHAR (256),
         energy DOUBLE PRECISION,
         atomic_forces_00 DOUBLE PRECISION [] [],
@@ -1450,9 +1453,7 @@ class DataManager:
         pbc BOOL[],
         names VARCHAR (256) [],
         labels VARCHAR (256) [],
-        metadata_id VARCHAR (256),
-        metadata_path VARCHAR (256),
-        metadata_size INT,
+        metadata VARCHAR (10000),
         positions_00 DOUBLE PRECISION [][],
         positions_01 DOUBLE PRECISION [][],
         positions_02 DOUBLE PRECISION [][],
@@ -1478,6 +1479,52 @@ class DataManager:
         with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password) as conn:
             with conn.cursor() as curs:
                 curs.execute(sql)
+
+    def create_pg_pd_table(self):
+        sql = """
+        CREATE TABLE property_definitions (
+        hash VARCHAR (256) PRIMARY KEY,
+        last_modified VARCHAR (256),
+        definition VARCHAR (10000)
+        )
+        """
+        with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password) as conn:
+            with conn.cursor() as curs:
+                curs.execute(sql)
+
+    def insert_property_definition(self, property_dict):
+        # TODO: try except that property_dict must be jsonable
+        json_pd = json.dumps(property_dict) 
+        last_modified = dateutil.parser.parse(
+            datetime.datetime.now(tz=datetime.timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
+        )
+        md5_hash = hashlib.md5(json_pd.encode()).hexdigest()
+        sql = """
+            INSERT INTO property_definitions (hash, last_modified, definition)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (hash)
+            DO NOTHING
+        """
+        with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password) as conn:
+            with conn.cursor() as curs:
+                curs.execute(sql, (md5_hash, last_modified, json_pd))
+                return md5_hash
+
+    def get_property_definitions(self):
+        sql = """
+             SELECT definition
+             FROM property_definitions;
+        """ 
+        with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password, row_factory=dict_row) as conn:
+            with conn.cursor() as curs:
+                curs.execute(sql)
+                defs = curs.fetchall()
+                dict_defs = []
+                for d in defs:
+                    dict_defs.append(json.loads(d['definition']))
+                return (dict_defs)
 
     def insert_data_and_create_datset(self,        
         configs,
@@ -1525,6 +1572,25 @@ class DataManager:
             data_license,
         )
         return dataset_id
+
+    def get_table_schema(self, table_name):
+        
+        # Query to get the table schema
+        query = """
+        SELECT 
+            column_name, 
+            data_type, 
+            character_maximum_length, 
+            is_nullable 
+        FROM information_schema.columns 
+        WHERE table_name = %s
+        ORDER BY ordinal_position;
+        """
+        with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password) as conn:
+            with conn.cursor() as curs:
+                curs.execute(query, (table_name,))
+                schema = curs.fetchall()
+                return schema
 
     def create_dataset_pg_no_spark(self,
         name: str,
@@ -1589,6 +1655,16 @@ class DataManager:
             with conn.cursor() as curs:
                 curs.executemany(sql, values)
 
+    def insert_new_column(self, table, column_name, data_type):
+        sql = f"""
+            ALTER TABLE {table}
+            ADD COLUMN {column_name} {data_type};
+        """
+        with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password) as conn:
+            with conn.cursor() as curs:
+                curs.execute(sql)
+
+
     def update_dataset_pg_no_spark(self, configs, dataset_id, prop_map):
         # convert to CF AtomicConfiguration if not already
         converted_configs = []
@@ -1600,6 +1676,7 @@ class DataManager:
             else:
                 raise Exception("Configs must be an instance of either ase.Atoms or AtomicConfiguration")
         # update dataset_id
+        # TODO: Change so it iterates from largest version
         v_no = dataset_id.split('_')[-1]
         new_v_no = int(v_no) + 1
         new_dataset_id = dataset_id.split('_')[0] + '_' + dataset_id.split('_')[1] + '_' + str(new_v_no)

@@ -404,7 +404,9 @@ class Property(dict):
         definitions,
         configuration,
         property_map,
+        schema,
         standardize_energy=True,
+        schema=None,
     ):
         """
         A function for constructing a Property given a property setting hash, a property
