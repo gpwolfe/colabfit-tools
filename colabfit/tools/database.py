@@ -1042,8 +1042,8 @@ class DataManager:
         self.password = password
         self.host = host
         # self.configs = configs
-        if isinstance(prop_defs, dict):
-            prop_defs = [prop_defs]
+        #if isinstance(prop_defs, dict):
+        #    prop_defs = [prop_defs]
         #self.prop_defs = prop_defs
         self.read_write_batch_size = read_write_batch_size
         #self.prop_map = prop_map
@@ -1510,7 +1510,9 @@ class DataManager:
         with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password) as conn:
             with conn.cursor() as curs:
                 curs.execute(sql, (md5_hash, last_modified, json_pd))
-                return md5_hash
+        # TODO: insert columns into po table
+        # for key in keys
+        insert_new_column('property_objects', column_name, data_type)
 
     def get_property_definitions(self):
         sql = """
