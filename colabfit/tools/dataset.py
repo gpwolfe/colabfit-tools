@@ -173,11 +173,11 @@ class Dataset:
         energy = 0
         energies = [] 
         for p in props:
-            if p["atomic_forces_00"] is not None:
+            if p["atomic_forces_forces"] is not None:
                 forces += 1
-            if p["cauchy_stress"] is not None:
+            if p["cauchy_stress_stress"] is not None:
                 stress += 1
-            if p["energy"] is not None:
+            if p["energy_energy"] is not None:
                 energy += 1
                 energies.append(p["energy"])
 
@@ -186,7 +186,6 @@ class Dataset:
         row_dict['atomic_forces_count'] = forces
         row_dict['cauchy_stress_count'] = stress
         row_dict['energy_count'] = energy
-
         row_dict["authors"] = self.authors
         row_dict["description"] = self.description
         row_dict["license"] = self.data_license
