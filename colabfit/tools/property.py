@@ -142,7 +142,7 @@ prop_to_row_mapper = {
 def md_from_map(pmap_md, config: AtomicConfiguration) -> tuple:
     """
     Extract metadata from a property map.
-    Returns metadata dict as a JSON string, method, and software.
+    Returns metadata dict as a JSON string..
     """
     gathered_fields = {}
     for md_field in pmap_md.keys():
@@ -165,14 +165,8 @@ def md_from_map(pmap_md, config: AtomicConfiguration) -> tuple:
                 "source-unit": pmap_md[md_field]["units"],
             }
         else:
-            gathered_fields[md_field] = {"source-value": v}
-    method = gathered_fields.pop("method", None)
-    software = gathered_fields.pop("software", None)
-    if method is not None:
-        method = method["source-value"]
-    if software is not None:
-        software = software["source-value"]
-    return gathered_fields, method, software
+            gathered_fields[md_field] =  v
+    return json.dumps(gathered_fields)
 
 
 class PropertyParsingError(Exception):
@@ -281,7 +275,7 @@ class Property(dict):
             self.property_map = dict(property_map)
         else:
             self.property_map = {}
-        self.metadata = _parse_unstructured_metadata(metadata)
+        self.metadata = metadata
         self.chemical_formula_hill = instance.pop("chemical_formula_hill")
         if standardize_energy:
             self.standardize_energy()
@@ -439,9 +433,9 @@ class Property(dict):
             #print (pname,pmap_list)
             instance = instances.get(pname, None)
             if pname == "_metadata":
-                pi_md, method, software = md_from_map(pmap_list, configuration)
-                props_dict["method"] = method
-                props_dict["software"] = software
+                pi_md = md_from_map(pmap_list, configuration)
+                #props_dict["method"] = method
+                #props_dict["software"] = software
             elif instance is None:
                 raise PropertyParsingError(f"Property {pname} not found in definitions")
             else:
@@ -493,7 +487,6 @@ class Property(dict):
                 props_dict[pname] = {k: v for k, v in instance.items()}
         props_dict["chemical_formula_hill"] = configuration.get_chemical_formula()
         props_dict["configuration_id"] = configuration.id
-
         return cls(
             definitions=definitions,
             property_map=property_map,
@@ -511,7 +504,7 @@ class Property(dict):
         # TODO: contruct empty dict from schema or just use instance instead
         row_dict = {}
         #row_dict = _empty_dict_from_schema(property_object_schema)
-        #row_dict.update(self.metadata)
+        row_dict['metadata'] = self.metadata
         for key, val in self.instance.items():
             if key == "method":
                 row_dict["method"] = val
