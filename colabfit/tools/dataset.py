@@ -179,7 +179,7 @@ class Dataset:
                 stress += 1
             if p["energy_energy"] is not None:
                 energy += 1
-                energies.append(p["energy"])
+                energies.append(p["energy_energy"])
 
         row_dict['energy_mean'] = np.mean(energies)
         row_dict['energy_variance'] = np.var(energies)

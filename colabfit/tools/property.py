@@ -431,6 +431,7 @@ class Property(dict):
         pi_md = None
         for pname, pmap_list in property_map.items():
             #print (pname,pmap_list)
+            #print ('instances', instances)
             instance = instances.get(pname, None)
             if pname == "_metadata":
                 pi_md = md_from_map(pmap_list, configuration)
@@ -474,7 +475,7 @@ class Property(dict):
                         if (val["units"] != "None") and (val["units"] is not None):
                             instance[key]["source-unit"] = val["units"]
                 if p_info.key not in instance:
-                    print(f"Property {p_info.key} not found in {pname}")
+                    #print(f"Property {p_info.key} not found in {pname}")
                     pdef_dict.pop(pname)
                     continue
                 # hack to get around OpenKIM requiring the property-name be a dict
