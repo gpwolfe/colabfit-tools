@@ -61,12 +61,12 @@ class AtomicConfiguration(Atoms):
         )
         self.unique_identifier_kw = [
             "atomic_numbers",
-            "positions_00",
+            "positions",
             "cell",
             "pbc",
-            "metadata_id",
+            #"metadata_id",
         ]
-        self.unique_identifier_kw.extend([f"positions_{i:02d}" for i in range(1, 20)])
+        #self.unique_identifier_kw.extend([f"positions_{i:02d}" for i in range(1, 20)])
         self.info = info
         self.metadata = self.set_metadata(co_md_map)
         if isinstance(names, str):
@@ -233,7 +233,7 @@ class AtomicConfiguration(Atoms):
     def to_spark_row(self):
         co_dict = _empty_dict_from_schema(config_schema)
         co_dict["cell"] = self.cell.array.astype(float).tolist()
-        co_dict["positions_00"] = self.positions.astype(float).tolist()
+        co_dict["positions"] = self.positions.astype(float).tolist()
         co_dict["names"] = self.names
         co_dict["labels"] = self.labels
         co_dict["pbc"] = self.pbc.astype(bool).tolist()
@@ -241,8 +241,8 @@ class AtomicConfiguration(Atoms):
             datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         )
         co_dict["atomic_numbers"] = self.numbers.astype(int).tolist()
-        if self.metadata is not None:
-            co_dict.update(self.metadata)
+        #if self.metadata is not None:
+        #    co_dict.update(self.metadata)
         co_dict.update(self.configuration_summary())
         return co_dict
 

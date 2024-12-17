@@ -42,14 +42,15 @@ config_df_schema = StructType(
         StructField("pbc", ArrayType(BooleanType()), True),
         StructField("names", ArrayType(StringType()), True),
         StructField("labels", ArrayType(StringType()), True),
-        StructField("metadata_id", StringType(), True),
-        StructField("metadata_path", StringType(), True),
-        StructField("metadata_size", IntegerType(), True),
+        StructField(f"positions", ArrayType(ArrayType(DoubleType())), True),
+        #StructField("metadata_id", StringType(), True),
+        #StructField("metadata_path", StringType(), True),
+        #StructField("metadata_size", IntegerType(), True),
     ]
-    + [
-        StructField(f"positions_{i:02d}", ArrayType(ArrayType(DoubleType())), True)
-        for i in range(NSITES_COL_SPLITS)
-    ]
+    #+ [
+    #    StructField(f"positions_{i:02d}", ArrayType(ArrayType(DoubleType())), True)
+    #    for i in range(NSITES_COL_SPLITS)
+    #]
 )
 config_schema = get_stringified_schema(config_df_schema)
 config_md_schema = config_df_schema.add(StructField("metadata", StringType(), True))

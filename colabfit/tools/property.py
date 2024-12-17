@@ -253,26 +253,27 @@ class Property(dict):
         #     for k in property_object_schema.fieldNames()
         #     if k not in _hash_ignored_fields
         # ]
-        self.unique_identifier_kw = [
-            "adsorption_energy",
-            "atomic_forces_00",
-            "atomization_energy",
-            "cauchy_stress",
-            "cauchy_stress_volume_normalized",
-            "chemical_formula_hill",
-            "configuration_id",
-            "dataset_id",
-            "electronic_band_gap",
-            "electronic_band_gap_type",
-            "energy",
-            "formation_energy",
-            "metadata_id",
-            "method",
-            "software",
-        ]
-        self.unique_identifier_kw.extend(
-            [f"atomic_forces_{i:02d}" for i in range(1, 20)]
-        )
+        # TODO: dynamically set this
+        #self.unique_identifier_kw = [
+            #"adsorption_energy",
+            #"atomic_forces_00",
+            #"atomization_energy",
+            #"cauchy_stress",
+            #"cauchy_stress_volume_normalized",
+            #"chemical_formula_hill",
+            #"configuration_id",
+            #"dataset_id",
+            #"electronic_band_gap",
+            #"electronic_band_gap_type",
+            #"energy",
+            #"formation_energy",
+            #"metadata_id",
+            #"method",
+            #"software",
+        #]
+        #self.unique_identifier_kw.extend(
+        #    [f"atomic_forces_{i:02d}" for i in range(1, 20)]
+        #)
         self.instance = instance
         self.definitions = definitions
         self.nsites = nsites
@@ -287,6 +288,11 @@ class Property(dict):
         if dataset_id is not None:
             self.dataset_id = dataset_id
         self.spark_row = self.to_spark_row()
+        # TODO: Dynamically get unique_identifiers
+        self.unique_identifier_kw = []
+        for k,v in self.spark_row.items():
+            if k not in ['last_modified']:
+                self.unique_identifier_kw.append(k)
         self._hash = _hash(self.spark_row, self.unique_identifier_kw, False)
         self.spark_row["hash"] = str(self._hash)
         self._id = f"PO_{self._hash}"
@@ -404,7 +410,6 @@ class Property(dict):
         definitions,
         configuration,
         property_map,
-        schema,
         standardize_energy=True,
     ):
         """
@@ -431,6 +436,7 @@ class Property(dict):
         props_dict = {}
         pi_md = None
         for pname, pmap_list in property_map.items():
+            #print (pname,pmap_list)
             instance = instances.get(pname, None)
             if pname == "_metadata":
                 pi_md, method, software = md_from_map(pmap_list, configuration)
@@ -454,7 +460,9 @@ class Property(dict):
                         elif val["field"] in configuration.arrays:
                             data = configuration.arrays[val["field"]]
                         else:
+                            # TODO: Populate non existing ones with None
                             # Key not found on configurations. Will be checked later
+                            # data = None
                             continue
 
                         if isinstance(data, (np.ndarray, list)):
@@ -500,9 +508,26 @@ class Property(dict):
         """
         Convert the Property to a Spark Row object
         """
-        row_dict = _empty_dict_from_schema(property_object_schema)
-        row_dict.update(self.metadata)
+        # TODO: contruct empty dict from schema or just use instance instead
+        row_dict = {}
+        #row_dict = _empty_dict_from_schema(property_object_schema)
+        #row_dict.update(self.metadata)
         for key, val in self.instance.items():
+            if key == "method":
+                row_dict["method"] = val
+            elif key == "software":
+                row_dict["software"] = val
+            elif key == "_metadata":
+                continue
+            elif key == "configuration_id":
+                row_dict["configuration_id"] = val
+            else:
+                for k2, v2 in val.items():
+                    if k2 in ['property-id', 'instance-id']:
+                        continue
+                    else:
+                        row_dict[f'{key}_{k2}'.replace('-','_')] = v2['source-value']
+            '''
             if key == "method":
                 row_dict["method"] = val
             elif key == "software":
@@ -515,6 +540,7 @@ class Property(dict):
                 row_dict.update(prop_to_row_mapper["energy"](key, val))
             else:
                 row_dict.update(prop_to_row_mapper[key](val))
+            '''
         row_dict["last_modified"] = dateutil.parser.parse(
             datetime.datetime.now(tz=datetime.timezone.utc).strftime(
                 "%Y-%m-%dT%H:%M:%SZ"
@@ -523,6 +549,7 @@ class Property(dict):
         row_dict["chemical_formula_hill"] = self.chemical_formula_hill
         row_dict["multiplicity"] = 1
         row_dict["dataset_id"] = self.dataset_id
+        print ('rd',row_dict)
         return row_dict
 
     def standardize_energy(self):

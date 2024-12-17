@@ -1064,7 +1064,7 @@ class DataManager:
     ):
         """Convert COs and DOs to Spark rows."""
         co_po_rows = []
-        po_schema = self.get_table_schema('property_objects')
+        #po_schema = self.get_table_schema('property_objects')
         for config in configs:
             config.set_dataset_id(dataset_id)
             # TODO: Add PO schema as input to this method so to_spark_row works better
@@ -1072,7 +1072,6 @@ class DataManager:
                 definitions=prop_defs,
                 configuration=config,
                 property_map=prop_map,
-                schema=po_schema,
                 standardize_energy=standardize_energy,
             )
             co_po_rows.append(
@@ -1295,6 +1294,7 @@ class DataManager:
 
     def load_data_to_pg_in_batches_no_spark(self, configs, dataset_id=None, config_table=None, prop_object_table=None, prop_map=None):
         """Load data to PostgreSQL in batches."""
+
         co_po_rows = self.gather_co_po_in_batches(configs, dataset_id, prop_map)
         for co_po_batch in tqdm(
             co_po_rows,
@@ -1307,7 +1307,7 @@ class DataManager:
                 continue
             
             # make tuple of tuples for data
-            column_headers = tuple(co_rows[0].keys())[:-1]
+            column_headers = tuple(co_rows[0].keys())
             co_values = []
             for co_row in co_rows:
                 t = []
@@ -1322,30 +1322,33 @@ class DataManager:
                 t.append(co_row['dataset_ids'][0])
                 t.append(co_row['dataset_ids'][0])
                 co_values.append(t)
-            sql_co = "INSERT INTO configurations (id, hash, last_modified, dataset_ids, configuration_set_ids, chemical_formula_hill, chemical_formula_reduced, chemical_formula_anonymous, elements, elements_ratios, atomic_numbers, nsites, nelements, nperiodic_dimensions, cell, dimension_types, pbc, names, labels, metadata_id, metadata_path, metadata_size, positions_00,positions_01, positions_02, positions_03, positions_04, positions_05, positions_06, positions_07, positions_08, positions_09, positions_10, positions_11, positions_12, positions_13, positions_14, positions_15, positions_16, positions_17, positions_18, positions_19) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (hash) DO UPDATE SET dataset_ids = CASE WHEN NOT (%s = ANY(configurations.dataset_ids)) THEN array_append(configurations.dataset_ids, %s) ELSE configurations.dataset_ids END;"
+            sql_co = "INSERT INTO configurations (id, hash, last_modified, dataset_ids, configuration_set_ids, chemical_formula_hill, chemical_formula_reduced, chemical_formula_anonymous, elements, elements_ratios, atomic_numbers, nsites, nelements, nperiodic_dimensions, cell, dimension_types, pbc, names, labels, positions) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (hash) DO UPDATE SET dataset_ids = CASE WHEN NOT (%s = ANY(configurations.dataset_ids)) THEN array_append(configurations.dataset_ids, %s) ELSE configurations.dataset_ids END;"
           
-            # TODO: Probably won't need this after changing how po_rows are constructed
-            column_headers = tuple(po_rows[0].keys())
+            # TODO: Ensure all columns are present here
+            # TODO: get column names from query and ensure len matches values
+            columns = list(zip(*self.get_table_schema('property_objects')))[0]
+            column_string = ', '.join(list(columns))
+            val_string = ', '.join(['%s'] * len(columns))
             po_values = []
             for po_row in po_rows:
-                print (po_row)
                 t = []
-                for column in column_headers:
-                    if column in ['cauchy_stress_volume_normalized', 'electronic_band_gap', 'electronic_band_gap_type', 'formation_energy', 'adsorption_energy', 'atomization_energy', 'metadata', 'energy_unit', 'energy_per_atom', 'atomic_forces_unit', 'cauchy_stress_unit']:
-                        pass
-                    else:
+                for column in columns:
+                    #print (column)
+                    try:
                         val = po_row[column]
-                        if column == 'last_modified':
-                            val = val.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    except:
+                        val = None
+                    if column == 'last_modified':
+                        val = val.strftime("%Y-%m-%dT%H:%M:%SZ")
                     #if isinstance(val, (list, tuple, dict)):
                     #    print (column, type(val[0]))
                     #    val = str(val)
-                        t.append(val)
+                    t.append(val)
                 po_values.append(t)
             # TODO: get column names from query and ensure len matches values
-            sql_po = """
-                INSERT INTO property_objects (id, hash, last_modified, configuration_id, dataset_id, multiplicity, metadata_id, metadata_path, metadata_size, software, method, chemical_formula_hill, energy, atomic_forces_00, atomic_forces_01, atomic_forces_02, atomic_forces_03, atomic_forces_04, atomic_forces_05, atomic_forces_06, atomic_forces_07, atomic_forces_08, atomic_forces_09, atomic_forces_10, atomic_forces_11, atomic_forces_12, atomic_forces_13, atomic_forces_14, atomic_forces_15, atomic_forces_16, atomic_forces_17, atomic_forces_18, atomic_forces_19, cauchy_stress)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,%s, %s, %s, %s, %s, %s, %s, %s,%s,%s)
+            sql_po = f"""
+                INSERT INTO property_objects ({column_string})
+                VALUES ({val_string})
                 ON CONFLICT (hash)
                 DO UPDATE SET multiplicity = property_objects.multiplicity + 1;
 
@@ -1400,7 +1403,11 @@ class DataManager:
         configuration_id VARCHAR (256),
         dataset_id VARCHAR (256),
         multiplicity INT,
-        metadata VARCHAR (10000),
+        metadata VARCHAR (10000)
+        )
+        """
+        # Don't need anymore
+        '''
         chemical_formula_hill VARCHAR (256),
         energy DOUBLE PRECISION,
         atomic_forces_00 DOUBLE PRECISION [] [],
@@ -1425,13 +1432,14 @@ class DataManager:
         atomic_forces_19 DOUBLE PRECISION [] [],
         cauchy_stress DOUBLE PRECISION [] []
         )
-        """
+        '''
 
         with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password) as conn:
             with conn.cursor() as curs:
                 curs.execute(sql)
 
     def create_pg_co_table(self):
+        # TODO: Metadata
         sql = """
         CREATE TABLE configurations (
         id VARCHAR (256),
@@ -1453,27 +1461,7 @@ class DataManager:
         pbc BOOL[],
         names VARCHAR (256) [],
         labels VARCHAR (256) [],
-        metadata VARCHAR (10000),
-        positions_00 DOUBLE PRECISION [][],
-        positions_01 DOUBLE PRECISION [][],
-        positions_02 DOUBLE PRECISION [][],
-        positions_03 DOUBLE PRECISION [][],
-        positions_04 DOUBLE PRECISION [][],
-        positions_05 DOUBLE PRECISION [][],
-        positions_06 DOUBLE PRECISION [][],
-        positions_07 DOUBLE PRECISION [][],
-        positions_08 DOUBLE PRECISION [][],
-        positions_09 DOUBLE PRECISION [][],
-        positions_10 DOUBLE PRECISION [][],
-        positions_11 DOUBLE PRECISION [][],
-        positions_12 DOUBLE PRECISION [][],
-        positions_13 DOUBLE PRECISION [][],
-        positions_14 DOUBLE PRECISION [][],
-        positions_15 DOUBLE PRECISION [][],
-        positions_16 DOUBLE PRECISION [][],
-        positions_17 DOUBLE PRECISION [][],
-        positions_18 DOUBLE PRECISION [][],
-        positions_19 DOUBLE PRECISION [][]
+        positions DOUBLE PRECISION [][]
         )
         """
         with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password) as conn:
@@ -1511,8 +1499,26 @@ class DataManager:
             with conn.cursor() as curs:
                 curs.execute(sql, (md5_hash, last_modified, json_pd))
         # TODO: insert columns into po table
-        # for key in keys
-        insert_new_column('property_objects', column_name, data_type)
+        for key, v in property_dict.items():
+            if key in ['property-id', 'property-name', 'property-title', 'property-description',]:
+                continue
+            else:
+                column_name = property_dict['property-name'].replace('-', '_') + f'_{key}'.replace('-', '_')
+                if v['type'] == 'float':
+                    data_type = "DOUBLE PRECISION"
+                elif v['type'] == 'int':
+                    data_type = "INT"
+                elif v['type'] == 'bool':
+                    data_type = "BOOL"
+                else:
+                    data_type = "VARCHAR (10000)"
+                for i in range(len(v['extent'])):
+                    data_type += '[]' 
+            try:
+                self.insert_new_column('property_objects', column_name, data_type)
+
+            except Exception as e:
+                print(f"An error occurred: {e}")
 
     def get_property_definitions(self):
         sql = """
