@@ -549,7 +549,6 @@ class Property(dict):
         row_dict["chemical_formula_hill"] = self.chemical_formula_hill
         row_dict["multiplicity"] = 1
         row_dict["dataset_id"] = self.dataset_id
-        print ('rd',row_dict)
         return row_dict
 
     def standardize_energy(self):
