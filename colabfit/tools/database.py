@@ -14,7 +14,6 @@ from types import GeneratorType
 
 import boto3
 import dateutil.parser
-import findspark
 import psycopg
 from psycopg.rows import dict_row
 #import pyarrow as pa
