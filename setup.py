@@ -25,7 +25,7 @@ setup(
         "License :: OSI Approved :: BSD License",
     ],
     install_requires = [
-#        'ase',
+        'ase',
 #        'h5py',
         'kim_property',
         'numpy',
@@ -42,6 +42,7 @@ setup(
         'periodictable',
         'unidecode',
         'notebook',
+        'boto3',
     ],
 )
 
