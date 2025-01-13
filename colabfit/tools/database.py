@@ -1691,14 +1691,14 @@ class DataManager:
         
         self.load_data_to_pg_in_batches_no_spark(converted_configs, new_dataset_id, prop_map=prop_map)
 
-        config_df_1 = self.dataset_query_pg(dataset_id, 'configurations')
-        prop_df_1 = self.dataset_query_pg(dataset_id, 'property_objects')
+        #config_df_1 = self.dataset_query_pg(dataset_id, 'configurations')
+        #prop_df_1 = self.dataset_query_pg(dataset_id, 'property_objects')
         
         config_df_2 = self.dataset_query_pg(new_dataset_id, 'configurations')
         prop_df_2 = self.dataset_query_pg(new_dataset_id, 'property_objects')
 
-        config_df_1.extend(config_df_2)
-        prop_df_1.extend(prop_df_2)
+        #config_df_1.extend(config_df_2)
+        #prop_df_1.extend(prop_df_2)
         
         old_ds = self.get_dataset_pg(dataset_id)[0]
 
@@ -1711,8 +1711,8 @@ class DataManager:
         ds = Dataset(
             name=old_ds['name'],
             authors=old_ds['authors'],
-            config_df=config_df_1,
-            prop_df=prop_df_1,
+            config_df=config_df_2,
+            prop_df=prop_df_2,
             publication_link=s,
             data_link=d,
             description=old_ds['description'],

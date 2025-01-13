@@ -429,9 +429,9 @@ class Property(dict):
         }
         props_dict = {}
         pi_md = None
+        # print (property_map.items())
         for pname, pmap_list in property_map.items():
             #print (pname,pmap_list)
-            #print ('instances', instances)
             instance = instances.get(pname, None)
             if pname == "_metadata":
                 pi_md = md_from_map(pmap_list, configuration)
@@ -440,12 +440,16 @@ class Property(dict):
             elif instance is None:
                 raise PropertyParsingError(f"Property {pname} not found in definitions")
             else:
-                p_info = MAIN_KEY_MAP.get(pname, None)
-                if p_info is None:
-                    print(f"property {pname} not found in MAIN_KEY_MAP")
-                    continue
+                #p_info = MAIN_KEY_MAP.get(pname, None)
+            #    if p_info is None:
+                    #print(f"property {pname} not found in MAIN_KEY_MAP")
+            #        continue
                 instance = instance.copy()
+                #print (instance)
+                not_present = 0
                 for pmap_i, pmap in enumerate(pmap_list):
+                    #print (pmap.items())
+                    #print (configuration.info)
                     for key, val in pmap.items():
                         if "value" in val:
                             # Default value provided
@@ -458,6 +462,8 @@ class Property(dict):
                             # TODO: Populate non existing ones with None
                             # Key not found on configurations. Will be checked later
                             # data = None
+                            not_present = 1
+                            missing_name = key
                             continue
 
                         if isinstance(data, (np.ndarray, list)):
@@ -474,13 +480,16 @@ class Property(dict):
 
                         if (val["units"] != "None") and (val["units"] is not None):
                             instance[key]["source-unit"] = val["units"]
-                if p_info.key not in instance:
-                    #print(f"Property {p_info.key} not found in {pname}")
+                # TODO: Check below
+                #print ('instance', instance)
+                if not_present:
+                    print(f"Property {missing_name} not found in {pname}")
                     pdef_dict.pop(pname)
                     continue
                 # hack to get around OpenKIM requiring the property-name be a dict
                 prop_name_tmp = pdef_dict[pname].pop("property-name")
 
+                #print ('instance', instance)
                 check_instance_optional_key_marked_required_are_present(
                     instance, pdef_dict[pname]
                 )
