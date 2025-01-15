@@ -1775,7 +1775,10 @@ class DataManager:
         with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password, row_factory=dict_row) as conn:
             with conn.cursor() as curs:
                 curs.execute(sql)
-                return curs.fetchall()
+                try:
+                    return curs.fetchall()
+                except:
+                    return
 
     def dataset_query_pg(self,
         dataset_id=None,
