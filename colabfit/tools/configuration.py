@@ -93,7 +93,6 @@ class AtomicConfiguration(Atoms):
             self.id = self.id[:28]
         self.spark_row["id"] = self.id
         self.spark_row["hash"] = self._hash
-        # self.spark_row["dataset_ids"] = [self.dataset_id]
         self.spark_row = self.spark_row
         # Check for name conflicts in info/arrays; would cause bug in parsing
         if set(self.info.keys()).intersection(set(self.arrays.keys())):
@@ -234,7 +233,7 @@ class AtomicConfiguration(Atoms):
 
     def set_dataset_id(self, dataset_id):
         self.dataset_id = dataset_id
-        self.spark_row["dataset_ids"] = [dataset_id]
+        self.spark_row["dataset_id"] = dataset_id
 
     def to_spark_row(self):
         co_dict = _empty_dict_from_schema(config_schema)

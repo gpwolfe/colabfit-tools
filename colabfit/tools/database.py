@@ -42,7 +42,7 @@ from colabfit.tools.configuration_set import ConfigurationSet
 from colabfit.tools.dataset import Dataset
 from colabfit.tools.property import Property
 from colabfit.tools.schema import (
-    co_cs_mapping_schema,
+    co_cs_map_schema,
     config_arr_schema,
     config_md_schema,
     config_schema,
@@ -71,6 +71,7 @@ _CONFIGSETS_COLLECTION = "test_config_sets"
 _DATASETS_COLLECTION = "test_datasets"
 _PROPOBJECT_COLLECTION = "test_prop_objects"
 _CO_CS_MAP_COLLECTION = "test_co_cs_map"
+_CO_DS_MAP_COLLECTION = "test_co_ds_map"
 _MAX_STRING_LEN = 60000
 
 # from kim_property.definition import PROPERTY_ID as VALID_KIM_ID
@@ -110,6 +111,7 @@ class VastDataLoader:
         self.dataset_table = f"{self.table_prefix}.{_DATASETS_COLLECTION}"
         self.prop_object_table = f"{self.table_prefix}.{_PROPOBJECT_COLLECTION}"
         self.co_cs_map_table = f"{self.table_prefix}.{_CO_CS_MAP_COLLECTION}"
+        self.co_ds_map_table = f"{self.table_prefix}.{_CO_DS_MAP_COLLECTION}"
 
         self.bucket_dir = VAST_BUCKET_DIR
         self.metadata_dir = VAST_METADATA_DIR
@@ -200,7 +202,7 @@ class VastDataLoader:
             self.config_set_table: configuration_set_schema,
             self.dataset_table: dataset_schema,
             self.prop_object_table: property_object_schema,
-            self.co_cs_map_table: co_cs_mapping_schema,
+            self.co_cs_map_table: co_cs_map_schema,
         }
         table_schema = string_schema_dict[table_name]
         if ids_filter is not None:
@@ -453,7 +455,7 @@ class VastDataLoader:
             self.config_set_table: configuration_set_schema,
             self.dataset_table: dataset_schema,
             self.prop_object_table: property_object_schema,
-            self.co_cs_map_table: co_cs_mapping_schema,
+            self.co_cs_map_table: co_cs_map_schema,
         }
         unstring_schema_dict = {
             self.config_table: config_arr_schema,
@@ -618,7 +620,7 @@ class VastDataLoader:
             )
         return spark_df
 
-    def get_co_cs_mapping(self, cs_id: str):
+    def get_co_cs_map(self, cs_id: str):
         """
         Get configuration to configuration set mapping for a given ID.
 
@@ -637,7 +639,7 @@ class VastDataLoader:
             return None
         predicate = _.configuration_set_id == cs_id
         co_cs_map = self.simple_sdk_query(
-            self.co_cs_map_table, predicate, co_cs_mapping_schema
+            self.co_cs_map_table, predicate, co_cs_map_schema
         )
         if co_cs_map.count() == 0:
             print(f"No records found for given configuration set id {cs_id}")
@@ -686,25 +688,44 @@ class VastDataLoader:
             self.prop_object_table: property_object_schema,
         }
         df_schema = string_schema_dict[query_table]
+
         if query_table == self.config_table:
-            if name_match is None and label_match is None:
-                predicate = _.dataset_ids.contains(dataset_id)
-            if name_match is not None and label_match is not None:
-                predicate = (
-                    (_.dataset_ids.contains(dataset_id))
-                    & (_.names.contains(name_match))
-                    & (_.labels.contains(label_match))
+            spark_df = None
+            co_ids = (
+                self.spark.table(self.co_ds_map_table)
+                .filter(f"dataset_id == {dataset_id}")
+                .select("configuration_id")
+            )
+            if co_ids.count() == 0:
+                print(
+                    f"No records found for given dataset_id {dataset_id} in dataset-id mapping table"  # noqa E501
                 )
-            elif name_match is not None:
-                predicate = (_.dataset_ids.contains(dataset_id)) & (
-                    _.names.contains(name_match)
-                )
-            else:
-                predicate = (_.dataset_ids.contains(dataset_id)) & (
-                    _.labels.contains(label_match)
-                )
-            spark_df = self.simple_sdk_query(query_table, predicate, df_schema)
+                return self.spark.createDataFrame([], schema=df_schema)
+            # co_ids.cache()
+            co_id_batches = batched(sorted([x["id"] for x in co_ids.collect()]), 10000)
+            for co_id_batch in co_id_batches:
+                if name_match is None and label_match is None:
+                    predicate = _.id.isin(co_id_batch)
+                if name_match is not None and label_match is not None:
+                    predicate = (
+                        (_.id.isin(co_id_batch))
+                        & (_.names.contains(name_match))
+                        & (_.labels.contains(label_match))
+                    )
+                elif name_match is not None:
+                    predicate = (_.id.isin(co_id_batch)) & (_.names.contains(name_match))
+                else:
+                    predicate = (_.id.isin(co_id_batch)) & (
+                        _.labels.contains(label_match)
+                    )
+                if spark_df is None:
+                    spark_df = self.simple_sdk_query(query_table, predicate, df_schema)
+                else:
+                    spark_df = spark_df.union(
+                        self.simple_sdk_query(query_table, predicate, df_schema)
+                    )
             return spark_df
+
         elif query_table == self.prop_object_table:
             if configuration_ids is None:
                 predicate = _.dataset_id == dataset_id
@@ -1129,8 +1150,8 @@ class DataManager:
                     new_co_ids, update_co_ids = loader.update_existing_co_po_rows(
                         df=co_df,
                         table_name=loader.config_table,
-                        cols=["dataset_ids", "names", "labels"],
-                        elems=[self.dataset_id, None, None],
+                        cols=["names", "labels"],
+                        elems=[None, None],
                         str_schema=config_schema,
                         arr_schema=config_arr_schema,
                     )
@@ -1224,9 +1245,7 @@ class DataManager:
         3. Name for configuration set
         4. Description for configuration set
         """
-        dataset_id = self.dataset_id
         config_set_rows = []
-        co_row_update_df = None
         co_cs_write_df = None
         for i, (names_match, label_match, cs_name, cs_desc) in tqdm(
             enumerate(name_label_match), desc="Creating Configuration Sets"
@@ -1235,26 +1254,12 @@ class DataManager:
                 f"names match: {names_match}, label: {label_match}, "
                 f"cs_name: {cs_name}, cs_desc: {cs_desc}"
             )
-            if names_match and not label_match:
-                config_set_query_df = loader.config_set_query(
-                    query_table=loader.config_table,
-                    dataset_id=dataset_id,
-                    name_match=names_match,
-                )
-            # Currently an AND operation on labels: labels col contains x AND y
-            if label_match and not names_match:
-                config_set_query_df = loader.config_set_query(
-                    query_table=loader.config_table,
-                    dataset_id=dataset_id,
-                    label_match=label_match,
-                )
-            if names_match and label_match:
-                config_set_query_df = loader.config_set_query(
-                    query_table=loader.config_table,
-                    dataset_id=dataset_id,
-                    name_match=names_match,
-                    label_match=label_match,
-                )
+            config_set_query_df = loader.config_set_query(
+                query_table=loader.config_table,
+                dataset_id=self.dataset_id,
+                name_match=names_match,
+                label_match=label_match,
+            )
             co_id_df = (
                 config_set_query_df.select("id")
                 .distinct()
@@ -1264,22 +1269,22 @@ class DataManager:
                 "elements",
             ]
             unstring_col_udf = sf.udf(unstring_df_val, ArrayType(StringType()))
-            for col in string_cols:
-                config_set_query_df = config_set_query_df.withColumn(
-                    col, unstring_col_udf(sf.col(col))
-                )
+            config_set_query_df = config_set_query_df.select(
+                *[unstring_col_udf(sf.col(col)).alias(col) for col in string_cols],
+                *[col for col in config_set_query_df.columns if col not in string_cols],
+            )
             unstring_col_udf = sf.udf(unstring_df_val, ArrayType(IntegerType()))
             int_cols = [
                 "atomic_numbers",
                 "dimension_types",
             ]
-            for col in int_cols:
-                config_set_query_df = config_set_query_df.withColumn(
-                    col, unstring_col_udf(sf.col(col))
-                )
+            config_set_query_df = config_set_query_df.select(
+                *[unstring_col_udf(sf.col(col)).alias(col) for col in int_cols],
+                *[col for col in config_set_query_df.columns if col not in int_cols],
+            )
             t = time()
             prelim_cs_id = f"CS_{cs_name}_{self.dataset_id}"
-            co_cs_df = loader.get_co_cs_mapping(prelim_cs_id)
+            co_cs_df = loader.get_co_cs_map(prelim_cs_id)
             if co_cs_df is not None:
                 print(
                     f"Configuration Set {cs_name} already exists.\nRemove rows matching "  # noqa E501
@@ -1295,7 +1300,7 @@ class DataManager:
             co_cs_df = co_id_df.withColumn("configuration_set_id", sf.lit(config_set.id))
             if co_cs_write_df is None:
                 co_cs_write_df = co_cs_df
-            elif co_cs_write_df.count() > 10000:
+            elif co_cs_write_df.count() >= 10000:
                 print("Sending CO-CS map batch to write table")
                 loader.write_table(
                     co_cs_write_df, loader.co_cs_map_table, check_unique=False
@@ -1303,43 +1308,25 @@ class DataManager:
                 co_cs_write_df = co_cs_df
             else:
                 co_cs_write_df = co_cs_write_df.union(co_cs_df)
-            # loader.write_table(co_cs_df, loader.co_cs_map_table, check_unique=False)
-            if co_row_update_df is None:
-                co_row_update_df = config_set_query_df
-            elif co_row_update_df.count() > 10000:
-                loader.update_existing_co_po_rows(
-                    df=co_row_update_df,
-                    table_name=loader.config_table,
-                    cols=["configuration_set_ids"],
-                    elems=[config_set.id],
-                    str_schema=config_schema,
-                    arr_schema=config_arr_schema,
-                )
-                co_row_update_df = config_set_query_df
-            else:
-                co_row_update_df = co_row_update_df.union(config_set_query_df)
 
-            t_end = time() - t
-            print(f"Time to create CS and update COs with CS-ID: {t_end}")
+            print(f"Time to create CS and update CO-CS map: {time() - t}")
             config_set_rows.append(config_set.spark_row)
+            if len(config_set_rows) >= 10000:
+                config_set_df = loader.spark.createDataFrame(
+                    config_set_rows, schema=configuration_set_arr_schema
+                )
+                loader.write_table(config_set_df, loader.config_set_table)
+                config_set_rows = []
         if co_cs_write_df.count() > 0 and co_cs_write_df is not None:
             loader.write_table(
                 co_cs_write_df, loader.co_cs_map_table, check_unique=False
             )
-        if co_row_update_df.count() > 0 and co_row_update_df is not None:
-            loader.update_existing_co_po_rows(
-                df=co_row_update_df,
-                table_name=loader.config_table,
-                cols=["configuration_set_ids"],
-                elems=[config_set.id],
-                str_schema=config_schema,
-                arr_schema=config_arr_schema,
+        if len(config_set_rows) > 0:
+            config_set_df = loader.spark.createDataFrame(
+                config_set_rows, schema=configuration_set_arr_schema
             )
-        config_set_df = loader.spark.createDataFrame(
-            config_set_rows, schema=configuration_set_arr_schema
-        )
-        loader.write_table(config_set_df, loader.config_set_table)
-        return config_set_rows
+            loader.write_table(config_set_df, loader.config_set_table)
+        return
 
     def create_dataset(
         self,
