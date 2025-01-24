@@ -150,6 +150,12 @@ def md_from_map(pmap_md, config: AtomicConfiguration) -> tuple:
             v = pmap_md[md_field]["value"]
         elif "field" in pmap_md[md_field]:
             field_key = pmap_md[md_field]["field"]
+            if md_field == 'metadata' or '_metadata':
+                if field_key in config.info:
+                    assert isinstance(config.info[field_key], dict)
+                    for k2,v2 in config.info[field_key].items():
+                       gathered_fields[k2] = v2
+                continue
             if field_key in config.info:
                 v = config.info[field_key]
             elif field_key in config.arrays:
@@ -404,7 +410,7 @@ class Property(dict):
         definitions,
         configuration,
         property_map,
-        standardize_energy=True,
+        standardize_energy=False,
     ):
         """
         A function for constructing a Property given a property setting hash, a property
@@ -433,6 +439,7 @@ class Property(dict):
         for pname, pmap_list in property_map.items():
             #print (pname,pmap_list)
             instance = instances.get(pname, None)
+            #print ('pname',pname)
             if pname == "_metadata":
                 pi_md = md_from_map(pmap_list, configuration)
                 #props_dict["method"] = method
@@ -483,7 +490,7 @@ class Property(dict):
                 # TODO: Check below
                 #print ('instance', instance)
                 if not_present:
-                    print(f"Property {missing_name} not found in {pname}")
+                    #print(f"Property {missing_name} not found in {pname}")
                     pdef_dict.pop(pname)
                     continue
                 # hack to get around OpenKIM requiring the property-name be a dict

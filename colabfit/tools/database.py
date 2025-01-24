@@ -1031,7 +1031,7 @@ class DataManager:
         #prop_defs: list[dict] = [atomic_forces_pd, energy_pd, cauchy_stress_pd, quests_descriptor_pd, mask_selection_pd],
         #prop_map: dict = None,
         # dataset_id=None,
-        standardize_energy: bool = True,
+        standardize_energy: bool = False,
         read_write_batch_size=10000,
     ):
         self.dbname = dbname
@@ -1319,9 +1319,12 @@ class DataManager:
                     #    val = str(val)
                     t.append(val)
                 t.append(co_row['dataset_ids'][0])
-                t.append(co_row['dataset_ids'][0])
+                # t.append(co_row['dataset_ids'][0])
                 co_values.append(t)
-            sql_co = "INSERT INTO configurations (id, hash, last_modified, dataset_ids, configuration_set_ids, chemical_formula_hill, chemical_formula_reduced, chemical_formula_anonymous, elements, elements_ratios, atomic_numbers, nsites, nelements, nperiodic_dimensions, cell, dimension_types, pbc, names, labels, positions) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (hash) DO UPDATE SET dataset_ids = CASE WHEN NOT (%s = ANY(configurations.dataset_ids)) THEN array_append(configurations.dataset_ids, %s) ELSE configurations.dataset_ids END;"
+            sql_co = "INSERT INTO configurations (id, hash, last_modified, dataset_ids, configuration_set_ids, chemical_formula_hill, chemical_formula_reduced, chemical_formula_anonymous, elements, elements_ratios, atomic_numbers, nsites, nelements, nperiodic_dimensions, cell, dimension_types, pbc, names, labels, positions) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (hash) DO UPDATE SET dataset_ids = array_append(configurations.dataset_ids, %s);"
+# TODO: Need to modify dataset.from_pg to properly aggregate values and get data to get two copie
+
+#SET dataset_ids = CASE WHEN NOT (%s = ANY(configurations.dataset_ids)) THEN array_append(configurations.dataset_ids, %s) ELSE configurations.dataset_ids END;"
           
             # TODO: Ensure all columns are present here
             # TODO: get column names from query and ensure len matches values
