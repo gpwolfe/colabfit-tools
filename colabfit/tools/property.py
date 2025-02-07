@@ -434,10 +434,10 @@ class Property(dict):
         }
         props_dict = {}
         pi_md = None
-        for pname, pmap_list in property_map.items():
+        for pname, pmap_val in property_map.items():
             instance = instances.get(pname, None)
             if pname == "_metadata":
-                pi_md, method, software = md_from_map(pmap_list, configuration)
+                pi_md, method, software = md_from_map(pmap_val, configuration)
                 props_dict["method"] = method
                 props_dict["software"] = software
             elif instance is None:
@@ -448,40 +448,38 @@ class Property(dict):
                     print(f"property {pname} not found in MAIN_KEY_MAP")
                     continue
                 instance = instance.copy()
-                for pmap_i, pmap in enumerate(pmap_list):
-                    for key, val in pmap.items():
-                        if "value" in val:
-                            # Default value provided
-                            data = val["value"]
-                        elif val["field"] in configuration.info:
-                            data = configuration.info[val["field"]]
-                        elif val["field"] in configuration.arrays:
-                            data = configuration.arrays[val["field"]]
-                        else:
-                            # Key not found on configurations. Will be checked later
-                            continue
+                # for pmap_i, pmap in enumerate(pmap_list):
+                for key, val in pmap_val.items():
+                    if "value" in val:
+                        # Default value provided
+                        data = val["value"]
+                    elif val["field"] in configuration.info:
+                        data = configuration.info[val["field"]]
+                    elif val["field"] in configuration.arrays:
+                        data = configuration.arrays[val["field"]]
+                    else:
+                        # Key not found on configurations. Will be checked later
+                        continue
 
-                        if isinstance(data, (np.ndarray, list)):
-                            data = np.atleast_1d(data).tolist()
-                        elif isinstance(data, np.integer):
-                            data = int(data)
-                        elif isinstance(data, np.floating):
-                            data = float(data)
-                        elif isinstance(data, (str, bool, int, float)):
-                            continue
-                        instance[key] = {
-                            "source-value": data,
-                        }
-
-                        if (val["units"] != "None") and (val["units"] is not None):
-                            instance[key]["source-unit"] = val["units"]
+                    if isinstance(data, (np.ndarray, list)):
+                        data = np.atleast_1d(data).tolist()
+                    elif isinstance(data, np.integer):
+                        data = int(data)
+                    elif isinstance(data, np.floating):
+                        data = float(data)
+                    instance[key] = {
+                        "source-value": data,
+                    }
+                    if (val["units"] != "None") and (val["units"] is not None):
+                        instance[key]["source-unit"] = val["units"]
                 if p_info.key not in instance:
-                    print(f"Property {p_info.key} not found in {pname}")
+                    print(
+                        f"Property {p_info.key} not found in property map for {pname}: {pmap_val}"  # noqa E501
+                    )
                     pdef_dict.pop(pname)
                     continue
                 # hack to get around OpenKIM requiring the property-name be a dict
                 prop_name_tmp = pdef_dict[pname].pop("property-name")
-
                 check_instance_optional_key_marked_required_are_present(
                     instance, pdef_dict[pname]
                 )
@@ -875,7 +873,7 @@ class PropertyMap:
         self.validate_properties()
         return {
             "_metadata": self.get_metadata(),
-            **{k: [v] for k, v in self.properties.items()},
+            **{k: v for k, v in self.properties.items()},
         }
 
 
