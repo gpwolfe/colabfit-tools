@@ -301,7 +301,6 @@ class VastDataLoader:
             field = field.with_nullable(True)
         if not self.spark.catalog.tableExists(table_name):
             print(f"Creating table {table_name}")
-
             with self.session.transaction() as tx:
                 schema = tx.bucket(bucket_name).schema(schema_name)
                 schema.create_table(table_n, arrow_schema)
@@ -919,6 +918,36 @@ class DataManager:
                 )
             )
         return co_po_rows
+
+    def co_po_example_rows(self):
+        """Returns a single configuration row and property object row.
+        Used to test whether ingest script will return expected values.
+        Note that metadata_path, metadata_size, and metadata_hash will not have been
+        populated, and metadata field will not yet have been removed.
+        Returns:
+        --------
+        tuple:
+            AtomicConfiguration from which configuration and property_object rows
+                are generated.
+            tuple: (dict, dict)
+                Configuration row and property object row.
+        """
+        if isinstance(self.configs, list):
+            config = [self.configs[0]]
+        elif isinstance(self.configs, GeneratorType):
+            config = [next(self.configs)]
+        else:
+            raise ValueError("configs must be a list or generator")
+        return (
+            config[0],
+            self._gather_co_po_rows(
+                self.prop_defs,
+                self.prop_map,
+                self.dataset_id,
+                config,
+                standardize_energy=self.standardize_energy,
+            )[0],
+        )
 
     def gather_co_po_rows_pool(
         self, config_chunks: list[list[AtomicConfiguration]], pool
