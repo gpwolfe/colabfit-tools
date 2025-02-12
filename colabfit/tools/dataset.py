@@ -2,18 +2,17 @@ import datetime
 import warnings
 
 import dateutil
-import pandas as pd
 import pyspark.sql.functions as sf
-from pyspark.sql.types import StringType
 from unidecode import unidecode
 
 from colabfit import MAX_STRING_LENGTH
-from colabfit.tools.schema import config_arr_schema, dataset_schema
+from colabfit.tools.schema import dataset_schema
 from colabfit.tools.utilities import (
     ELEMENT_MAP,
     _empty_dict_from_schema,
     _hash,
-    unstring_df_val_pd,
+    str_to_arrayof_int,
+    str_to_arrayof_str,
 )
 
 
@@ -161,17 +160,27 @@ class Dataset:
             "energy",
         )
 
-        carray_cols = ["atomic_numbers", "elements", "dimension_types"]
-        carray_types = {
-            col.name: col.dataType
-            for col in config_arr_schema
-            if col.name in carray_cols
-        }
-
-        for col in carray_cols:
-            unstr_udf = sf.pandas_udf(unstring_df_val_pd, carray_types[col])
-            config_df = config_df.withColumn(col, unstr_udf(sf.col(col)))
-
+        int_array_cols = ["atomic_numbers", "dimension_types"]
+        str_array_cols = ["elements"]
+        config_df = config_df.select(
+            [
+                (
+                    str_to_arrayof_int(sf.col(col)).alias(col)
+                    if col in int_array_cols
+                    else col
+                )
+                for col in config_df.columns
+            ]
+        ).select(
+            [
+                (
+                    str_to_arrayof_str(sf.col(col)).alias(col)
+                    if col in str_array_cols
+                    else col
+                )
+                for col in config_df.columns
+            ]
+        )
         config_df.cache()
         row_dict["nconfigurations"] = config_df.count()
         row_dict["nsites"] = config_df.agg({"nsites": "sum"}).first()[0]
@@ -196,18 +205,6 @@ class Dataset:
         print(total_atoms, row_dict["nsites"])
         assert total_atoms == row_dict["nsites"]
 
-        # @sf.pandas_udf(StringType())
-        # def element_map_udf(col: pd.Series) -> pd.Series:
-        #     return col.map(ELEMENT_MAP)
-
-        # atomic_ratios_coll = (
-        #     atomic_ratios_df.withColumn(
-        #         "element",
-        #         element_map_udf(sf.col("single_element")),
-        #     )
-        #     .select("element", "ratio")
-        #     .collect()
-        # )
         element_map_expr = sf.create_map(
             [
                 sf.lit(k)
