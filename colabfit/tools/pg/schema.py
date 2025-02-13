@@ -5,130 +5,154 @@ config_schema (with stringified lists), for example, has a corresponding
 config_df_schema (with non-stringified lists).
 """
 
-NSITES_COL_SPLITS = 20
+from collections import namedtuple
 
-config_df_schema = StructType(
-    [
-        StructField("id", StringType(), True),
-        StructField("hash", StringType(), True),
-        StructField("last_modified", TimestampType(), True),
-        StructField("dataset_ids", ArrayType(StringType()), True),
-        StructField("configuration_set_ids", ArrayType(StringType()), True),
-        StructField("chemical_formula_hill", StringType(), True),
-        StructField("chemical_formula_reduced", StringType(), True),
-        StructField("chemical_formula_anonymous", StringType(), True),
-        StructField("elements", ArrayType(StringType()), True),
-        StructField("elements_ratios", ArrayType(DoubleType()), True),
-        StructField("atomic_numbers", ArrayType(IntegerType()), True),
-        StructField("nsites", IntegerType(), True),
-        StructField("nelements", IntegerType(), True),
-        StructField("nperiodic_dimensions", IntegerType(), True),
-        StructField("cell", ArrayType(ArrayType(DoubleType())), True),
-        StructField("dimension_types", ArrayType(IntegerType()), True),
-        StructField("pbc", ArrayType(BooleanType()), True),
-        StructField("names", ArrayType(StringType()), True),
-        StructField("labels", ArrayType(StringType()), True),
-        StructField("positions", ArrayType(ArrayType(DoubleType())), True),
-    ]
+column = namedtuple("field", ["name", "type", "nullable"])
+
+
+class Schema:
+    def __init__(self, name: str, columns: list[tuple]):
+        self.name = name
+        self.columns = columns
+
+    def add(self, column: tuple):
+        return Schema(self.name, self.columns + [column])
+
+    def __str__(self):
+        return str(self.columns)
+
+    def __repr__(self):
+        return str(self.columns)
+
+    def __eq__(self, other):
+        return self.name == other.name and self.columns == other.columns
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def __hash__(self):
+        return hash(self.columns + [self.name])
+
+
+config_schema = Schema(
+    name="configuration",
+    columns=[
+        column("id", "VARCHAR (256)", True),
+        column("hash", "VARCHAR (256)", True),
+        column("last_modified", "VARCHAR (256)", True),
+        column("dataset_ids", "VARCHAR (256) []", True),
+        column("configuration_set_ids", "VARCHAR (256) []", True),
+        column("chemical_formula_hill", "VARCHAR (256)", True),
+        column("chemical_formula_reduced", "VARCHAR (256)", True),
+        column("chemical_formula_anonymous", "VARCHAR (256)", True),
+        column("elements", "VARCHAR (256) []", True),
+        column("elements_ratios", "DOUBLE PRECISION []", True),
+        column("atomic_numbers", "INT []", True),
+        column("nsites", "INT", True),
+        column("nelements", "INT", True),
+        column("nperiodic_dimensions", "INT", True),
+        column("cell", "DOUBLE PRECISION [] []", True),
+        column("dimension_types", "INT []", True),
+        column("pbc", "BOOL []", True),
+        column("names", "VARCHAR (256) []", True),
+        column("labels", "VARCHAR (256) []", True),
+        column("positions", "DOUBLE PRECISION [] []", True),
+    ],
 )
 
-config_md_schema = config_df_schema.add(StructField("metadata", StringType(), True))
+config_md_schema = config_schema.add(column("metadata", "VARCHAR (10000)", True))
 
 
-property_object_df_schema = StructType(
-    [
-        StructField("id", StringType(), True),
-        StructField("hash", StringType(), True),
-        StructField("last_modified", TimestampType(), True),
-        StructField("configuration_id", StringType(), True),
-        StructField("dataset_id", StringType(), True),
-        StructField("multiplicity", IntegerType(), True),
-        StructField("metadata_id", StringType(), True),
-        StructField("metadata_path", StringType(), True),
-        StructField("metadata_size", IntegerType(), True),
-        StructField("software", StringType(), True),
-        StructField("method", StringType(), True),
-        StructField("chemical_formula_hill", StringType(), True),
-        StructField("energy", DoubleType(), True),
-    ]
-    + [
-        StructField(f"atomic_forces_{i:02d}", ArrayType(ArrayType(DoubleType())), True)
-        for i in range(NSITES_COL_SPLITS)
-    ]
-    + [
-        StructField("cauchy_stress", ArrayType(ArrayType(DoubleType())), True),
-        StructField("cauchy_stress_volume_normalized", BooleanType(), True),
-        StructField("electronic_band_gap", DoubleType(), True),
-        StructField("electronic_band_gap_type", StringType(), True),
-        StructField("formation_energy", DoubleType(), True),
-        StructField("adsorption_energy", DoubleType(), True),
-        StructField("atomization_energy", DoubleType(), True),
-    ]
+property_object_schema = Schema(
+    name="property_object",
+    columns=[
+        column("id", "VARCHAR (256)", True),
+        column("hash", "VARCHAR (256)", True),
+        column("last_modified", "VARCHAR (256)", True),
+        column("configuration_id", "VARCHAR (256)", True),
+        column("dataset_id", "VARCHAR (256)", True),
+        column("multiplicity", "INT", True),
+        column("metadata_id", "VARCHAR (256)", True),
+        column("software", "VARCHAR (256)", True),
+        column("method", "VARCHAR (256)", True),
+        column("chemical_formula_hill", "VARCHAR (256)", True),
+        column("energy", "DOUBLE PRECISION", True),
+        column("atomic_forces", "DOUBLE PRECISION [] []", True),
+        column("cauchy_stress", "DOUBLE PRECISION [] []", True),
+        column("cauchy_stress_volume_normalized", "BOOL", True),
+        column("electronic_band_gap", "DOUBLE PRECISION", True),
+        column("electronic_band_gap_type", "VARCHAR (256)", True),
+        column("formation_energy", "DOUBLE PRECISION", True),
+        column("adsorption_energy", "DOUBLE PRECISION", True),
+        column("atomization_energy", "DOUBLE PRECISION", True),
+    ],
     # TODO: Add schema associated with new properties: selection/descriptor
 )
 
-property_object_md_schema = property_object_df_schema.add(
-    StructField("metadata", StringType(), True)
+property_object_md_schema = property_object_schema.add(
+    column("metadata", "VARCHAR (10000)", True)
+)
+
+dataset_df_schema = Schema(
+    name="dataset",
+    columns=[
+        column("id", "VARCHAR (256)", True),
+        column("hash", "VARCHAR (256) PRIMARY KEY", True),
+        column("name", "VARCHAR (256)", True),
+        column("last_modified", "VARCHAR (256)", True),
+        column("nconfigurations", "INT", True),
+        column("nproperty_objects", "INT", True),
+        column("nsites", "INT", True),
+        column("nelements", "INT", True),
+        column("elements", "VARCHAR (1000) []", True),
+        column("total_elements_ratios", "DOUBLE PRECISION []", True),
+        column("nperiodic_dimensions", "INT []", True),
+        column("dimension_types", "VARCHAR (1000) []", True),
+        column("energy_count", "INT", True),
+        column("energy_mean", "DOUBLE PRECISION", True),
+        column("energy_variance", "DOUBLE PRECISION", True),
+        column("atomization_energy_count", "INT", True),
+        column("adsorption_energy_count", "INT", True),
+        column("formation_energy_count", "INT", True),
+        column("atomic_forces_count", "INT", True),
+        column("electronic_band_gap_count", "INT", True),
+        column("cauchy_stress_count", "INT", True),
+        column("authors", "VARCHAR (256)", True),
+        column("description", "VARCHAR (10000)", True),
+        column("extended_id", "VARCHAR (1000)", True),
+        column("license", "VARCHAR (256)", True),
+        column("links", "VARCHAR (1000) []", True),
+        column("publication_year", "VARCHAR (256)", True),
+        column("doi", "VARCHAR (256)", True),
+    ],
 )
 
 
-dataset_df_schema = StructType(
-    [
-        StructField("id", StringType(), True),
-        StructField("hash", StringType(), True),
-        StructField("name", StringType(), True),
-        StructField("last_modified", TimestampType(), True),
-        StructField("nconfigurations", IntegerType(), True),
-        StructField("nproperty_objects", LongType(), True),
-        StructField("nsites", LongType(), True),
-        StructField("nelements", IntegerType(), True),
-        StructField("elements", ArrayType(StringType()), True),
-        StructField("total_elements_ratios", ArrayType(DoubleType()), True),
-        StructField("nperiodic_dimensions", ArrayType(IntegerType()), True),
-        StructField("dimension_types", ArrayType(ArrayType(IntegerType())), True),
-        StructField("energy_count", LongType(), True),
-        StructField("energy_mean", DoubleType(), True),
-        StructField("energy_variance", DoubleType(), True),
-        StructField("atomization_energy_count", LongType(), True),
-        StructField("adsorption_energy_count", LongType(), True),
-        StructField("formation_energy_count", LongType(), True),
-        StructField("atomic_forces_count", LongType(), True),
-        StructField("electronic_band_gap_count", LongType(), True),
-        StructField("cauchy_stress_count", LongType(), True),
-        StructField("authors", ArrayType(StringType()), True),
-        StructField("description", StringType(), True),
-        StructField("extended_id", StringType(), True),
-        StructField("license", StringType(), True),
-        StructField("links", StringType(), True),
-        StructField("publication_year", StringType(), True),
-        StructField("doi", StringType(), True),
-    ]
+configuration_set_schema = Schema(
+    name="configuration_set",
+    column=[
+        column("id", "VARCHAR (256)", True),
+        column("hash", "VARCHAR (256)", True),
+        column("last_modified", "VARCHAR (256)", True),
+        column("nconfigurations", "INT", True),
+        column("nperiodic_dimensions", "INT []", True),
+        column("dimension_types", "INT []", True),
+        column("nsites", "INT", True),
+        column("nelements", "INT", True),
+        column("elements", "VARCHAR (1000) []", True),
+        column("total_elements_ratios", "DOUBLE PRECISION []", True),
+        column("description", "VARCHAR (10000)", True),
+        column("name", "VARCHAR (256)", True),
+        column("dataset_id", "VARCHAR (256)", True),
+        column("ordered", "BOOL", True),
+        column("extended_id", "VARCHAR (256)", True),
+    ],
 )
 
-
-configuration_set_df_schema = StructType(
-    [
-        StructField("id", StringType(), True),
-        StructField("hash", StringType(), True),
-        StructField("last_modified", TimestampType(), True),
-        StructField("nconfigurations", IntegerType(), True),
-        StructField("nperiodic_dimensions", ArrayType(IntegerType()), True),
-        StructField("dimension_types", ArrayType(ArrayType(IntegerType())), True),
-        StructField("nsites", LongType(), True),
-        StructField("nelements", IntegerType(), True),
-        StructField("elements", ArrayType(StringType()), True),
-        StructField("total_elements_ratios", ArrayType(DoubleType()), True),
-        StructField("description", StringType(), True),
-        StructField("name", StringType(), True),
-        StructField("dataset_id", StringType(), True),
-        StructField("ordered", BooleanType(), True),
-        StructField("extended_id", StringType(), True),
-    ]
-)
-
-co_cs_mapping_schema = StructType(
-    [
-        StructField("configuration_id", StringType(), True),
-        StructField("configuration_set_id", StringType(), True),
-    ]
+co_cs_mapping_schema = Schema(
+    name="config_set_mapping",
+    columns=[
+        column("configuration_id", "VARCHAR (256)", True),
+        column("configuration_set_id", "VARCHAR (256)", True),
+    ],
 )
