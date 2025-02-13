@@ -5,7 +5,6 @@ from ast import literal_eval
 from hashlib import sha512
 
 import numpy as np
-import pandas as pd
 import pyarrow as pa
 from pyspark.sql import functions as sf
 from pyspark.sql.types import (
@@ -16,6 +15,7 @@ from pyspark.sql.types import (
     StringType,
     StructField,
     StructType,
+    ArrayType,
     TimestampType,
 )
 
@@ -233,24 +233,26 @@ def _parse_unstructured_metadata(md_json):
     }
 
 
-def unstring_df_val_pd(series: pd.Series) -> pd.Series:
-    def process_val(val):
+@sf.udf(returnType=ArrayType(StringType()))
+def str_to_arrayof_str(val):
+    try:
         if isinstance(val, str) and len(val) > 0 and val[0] == "[":
             return literal_eval(val)
-        return val
+    except ValueError:
+        raise ValueError(f"Error converting {val} to list")
 
-    return series.apply(process_val)
+
+@sf.udf(returnType=ArrayType(IntegerType()))
+def str_to_arrayof_int(val):
+    if isinstance(val, str) and len(val) > 0 and val[0] == "[":
+        return literal_eval(val)
+    raise ValueError(f"Error converting {val} to list")
 
 
 def unstring_df_val(val):
     if val is not None and len(val) > 0 and val[0] == "[":
         return literal_eval(val)
     return val
-
-
-# @sf.pandas_udf(StringType())
-# def stringify_df_val_udf(series: pd.Series) -> pd.Series:
-#     return series.astype(str)
 
 
 @sf.udf(returnType=StringType())
