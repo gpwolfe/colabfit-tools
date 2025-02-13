@@ -141,23 +141,29 @@ class Dataset:
                 "%Y-%m-%dT%H:%M:%SZ"
             ))
         row_dict["nconfiguration_sets"] = len(self.configuration_set_ids)
-        row_dict['nconfigurations'] = len(configs)
+        row_dict['nconfigurations'] = len(props)
         row_dict['nproperty_objects'] = len(props)
         nsites = 0
         nperiodic_dimensions = set()
         dimension_types = set()
         element_dict = {} 
 
-        for c in configs:
-            nsites += c['nsites']
-            for e in c['atomic_numbers']:
-                e = ELEMENT_MAP[e] 
-                if e in element_dict:
-                    element_dict[e] += 1
-                else:
-                    element_dict[e] = 1
-            nperiodic_dimensions.add(c['nperiodic_dimensions'])
-            dimension_types.add(str(c['dimension_types']))
+        # TODO: Streamline this
+        for p in props:
+            co_id = p['configuration_id']
+            
+
+            for c in configs:
+                if c['id'] == co_id:
+                    nsites += c['nsites']
+                    for e in c['atomic_numbers']:
+                       e = ELEMENT_MAP[e] 
+                       if e in element_dict:
+                            element_dict[e] += 1
+                       else:
+                            element_dict[e] = 1
+                    nperiodic_dimensions.add(c['nperiodic_dimensions'])
+                    dimension_types.add(str(c['dimension_types']))
 
         sorted_elements = sorted(list(element_dict.keys()))
 
@@ -171,8 +177,9 @@ class Dataset:
         forces = 0
         stress = 0
         energy = 0
-        energies = [] 
+        energies = []
         for p in props:
+            #print (p.keys())
             if p["atomic_forces_forces"] is not None:
                 forces += 1
             if p["cauchy_stress_stress"] is not None:
@@ -316,7 +323,7 @@ class Dataset:
             prop_df.select(prop).where(f"{prop} is not null").agg(sf.mean(prop))
         ).first()[0]
 
-        row_dict["nconfigurations"] = config_df.count()
+        row_dict["nconfigurations"] = prop_df.count()
         row_dict["authors"] = self.authors
         row_dict["description"] = self.description
         row_dict["license"] = self.data_license
