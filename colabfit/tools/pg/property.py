@@ -247,18 +247,18 @@ class Property(dict):
             self.standardize_energy()
         if dataset_id is not None:
             self.dataset_id = dataset_id
-        self.spark_row = self.to_spark_row()
+        self.row_dict = self.to_row_dict()
         # TODO: Dynamically get unique_identifiers
         self.unique_identifier_kw = []
-        for k, v in self.spark_row.items():
+        for k, v in self.row_dict.items():
             if k not in ["last_modified"]:
                 self.unique_identifier_kw.append(k)
-        self._hash = _hash(self.spark_row, self.unique_identifier_kw, False)
-        self.spark_row["hash"] = str(self._hash)
+        self._hash = _hash(self.row_dict, self.unique_identifier_kw, False)
+        self.row_dict["hash"] = str(self._hash)
         self._id = f"PO_{self._hash}"
         if len(self._id) > 28:
             self._id = self._id[:28]
-        self.spark_row["id"] = self._id
+        self.row_dict["id"] = self._id
 
     @property
     def instance(self):
@@ -454,10 +454,10 @@ class Property(dict):
             metadata=pi_md,
             dataset_id=configuration.dataset_id,
             standardize_energy=standardize_energy,
-            nsites=configuration.spark_row["nsites"],
+            nsites=configuration.row_dict["nsites"],
         )
 
-    def to_spark_row(self):
+    def to_row_dict(self):
         """
         Convert the Property to a Spark Row object
         """
@@ -576,7 +576,7 @@ class Property(dict):
     def __hash__(self):
 
         return _hash(
-            self.spark_row,
+            self.row_dict,
             sorted(self.unique_identifier_kw),
         )
 

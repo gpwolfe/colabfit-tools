@@ -76,13 +76,13 @@ class AtomicConfiguration(Atoms):
             self.labels = [labels]
         else:
             self.labels = labels
-        self.spark_row = self.to_spark_row()
+        self.row_dict = self.to_row_dict()
         self._hash = hash(self)
         self.id = f"CO_{self._hash}"
 
-        self.spark_row["id"] = self.id
-        self.spark_row["hash"] = str(self._hash)
-        self.spark_row = self.spark_row
+        self.row_dict["id"] = self.id
+        self.row_dict["hash"] = str(self._hash)
+        self.row_dict = self.row_dict
         # Check for name conflicts in info/arrays; would cause bug in parsing
         if set(self.info.keys()).intersection(set(self.arrays.keys())):
             raise RuntimeError(
@@ -217,14 +217,13 @@ class AtomicConfiguration(Atoms):
             "chemical_formula_hill": self.get_chemical_formula(),
             "dimension_types": self.get_pbc().astype(int).tolist(),
             "nperiodic_dimensions": int(sum(self.get_pbc())),
-            # 'species': species,  # Is this ever used?
         }
 
     def set_dataset_id(self, dataset_id):
         self.dataset_id = dataset_id
-        self.spark_row["dataset_ids"] = [dataset_id]
+        self.row_dict["dataset_ids"] = [dataset_id]
 
-    def to_spark_row(self):
+    def to_row_dict(self):
         co_dict = _empty_dict_from_schema(config_schema)
         co_dict["cell"] = self.cell.array.astype(float).tolist()
         co_dict["positions"] = self.positions.astype(float).tolist()
@@ -325,4 +324,4 @@ class AtomicConfiguration(Atoms):
         )
 
     def __hash__(self):
-        return _hash(self.spark_row, sorted(self.unique_identifier_kw), False)
+        return _hash(self.row_dict, sorted(self.unique_identifier_kw), False)
