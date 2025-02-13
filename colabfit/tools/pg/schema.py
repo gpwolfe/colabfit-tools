@@ -5,20 +5,6 @@ config_schema (with stringified lists), for example, has a corresponding
 config_df_schema (with non-stringified lists).
 """
 
-from pyspark.sql.types import (
-    ArrayType,
-    BooleanType,
-    DoubleType,
-    IntegerType,
-    LongType,
-    StringType,
-    StructField,
-    StructType,
-    TimestampType,
-)
-
-from colabfit.tools.utilities import get_stringified_schema
-
 NSITES_COL_SPLITS = 20
 
 config_df_schema = StructType(
@@ -42,17 +28,10 @@ config_df_schema = StructType(
         StructField("pbc", ArrayType(BooleanType()), True),
         StructField("names", ArrayType(StringType()), True),
         StructField("labels", ArrayType(StringType()), True),
-        StructField(f"positions", ArrayType(ArrayType(DoubleType())), True),
-        #StructField("metadata_id", StringType(), True),
-        #StructField("metadata_path", StringType(), True),
-        #StructField("metadata_size", IntegerType(), True),
+        StructField("positions", ArrayType(ArrayType(DoubleType())), True),
     ]
-    #+ [
-    #    StructField(f"positions_{i:02d}", ArrayType(ArrayType(DoubleType())), True)
-    #    for i in range(NSITES_COL_SPLITS)
-    #]
 )
-config_schema = get_stringified_schema(config_df_schema)
+
 config_md_schema = config_df_schema.add(StructField("metadata", StringType(), True))
 
 
@@ -88,7 +67,6 @@ property_object_df_schema = StructType(
     # TODO: Add schema associated with new properties: selection/descriptor
 )
 
-property_object_schema = get_stringified_schema(property_object_df_schema)
 property_object_md_schema = property_object_df_schema.add(
     StructField("metadata", StringType(), True)
 )
@@ -124,11 +102,8 @@ dataset_df_schema = StructType(
         StructField("links", StringType(), True),
         StructField("publication_year", StringType(), True),
         StructField("doi", StringType(), True),
-        # StructField("labels", ArrayType(StringType()), True),
     ]
 )
-
-dataset_schema = get_stringified_schema(dataset_df_schema)
 
 
 configuration_set_df_schema = StructType(
@@ -150,8 +125,6 @@ configuration_set_df_schema = StructType(
         StructField("extended_id", StringType(), True),
     ]
 )
-
-configuration_set_schema = get_stringified_schema(configuration_set_df_schema)
 
 co_cs_mapping_schema = StructType(
     [

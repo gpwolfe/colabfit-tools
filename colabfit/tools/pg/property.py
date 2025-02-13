@@ -15,17 +15,11 @@ from kim_property import (
     check_instance_optional_key_marked_required_are_present,
     kim_property_create,
 )
+from kim_property.create import KIM_PROPERTIES
 from kim_property.definition import PROPERTY_ID as VALID_KIM_ID
 
 from colabfit.tools.configuration import AtomicConfiguration
-from colabfit.tools.schema import property_object_schema
-from colabfit.tools.utilities import (
-    _empty_dict_from_schema,
-    _hash,
-    _parse_unstructured_metadata,
-)
-
-from kim_property.create import KIM_PROPERTIES
+from colabfit.tools.utilities import _hash
 
 EDN_KEY_MAP = {
     "energy": "unrelaxed-potential-energy",
@@ -67,14 +61,6 @@ _ignored_fields = [
     "unrelaxed-periodic-cell-vector-1",
     "unrelaxed-periodic-cell-vector-2",
     "unrelaxed-periodic-cell-vector-3",
-]
-_hash_ignored_fields = [
-    "id",
-    "hash",
-    "last_modified",
-    "multiplicity",
-    "metadata_path",
-    "metadata_size",
 ]
 
 
@@ -150,11 +136,11 @@ def md_from_map(pmap_md, config: AtomicConfiguration) -> tuple:
             v = pmap_md[md_field]["value"]
         elif "field" in pmap_md[md_field]:
             field_key = pmap_md[md_field]["field"]
-            if md_field == 'metadata' or '_metadata':
+            if md_field == "metadata" or "_metadata":
                 if field_key in config.info:
                     assert isinstance(config.info[field_key], dict)
-                    for k2,v2 in config.info[field_key].items():
-                       gathered_fields[k2] = v2
+                    for k2, v2 in config.info[field_key].items():
+                        gathered_fields[k2] = v2
                 continue
             if field_key in config.info:
                 v = config.info[field_key]
@@ -171,7 +157,7 @@ def md_from_map(pmap_md, config: AtomicConfiguration) -> tuple:
                 "source-unit": pmap_md[md_field]["units"],
             }
         else:
-            gathered_fields[md_field] =  v
+            gathered_fields[md_field] = v
     return json.dumps(gathered_fields)
 
 
@@ -248,32 +234,6 @@ class Property(dict):
                 If True, converts units to those expected by ColabFit. Default
                 is True
         """
-        # self.unique_identifier_kw = [
-        #     k
-        #     for k in property_object_schema.fieldNames()
-        #     if k not in _hash_ignored_fields
-        # ]
-        # TODO: dynamically set this
-        #self.unique_identifier_kw = [
-            #"adsorption_energy",
-            #"atomic_forces_00",
-            #"atomization_energy",
-            #"cauchy_stress",
-            #"cauchy_stress_volume_normalized",
-            #"chemical_formula_hill",
-            #"configuration_id",
-            #"dataset_id",
-            #"electronic_band_gap",
-            #"electronic_band_gap_type",
-            #"energy",
-            #"formation_energy",
-            #"metadata_id",
-            #"method",
-            #"software",
-        #]
-        #self.unique_identifier_kw.extend(
-        #    [f"atomic_forces_{i:02d}" for i in range(1, 20)]
-        #)
         self.instance = instance
         self.definitions = definitions
         self.nsites = nsites
@@ -290,8 +250,8 @@ class Property(dict):
         self.spark_row = self.to_spark_row()
         # TODO: Dynamically get unique_identifiers
         self.unique_identifier_kw = []
-        for k,v in self.spark_row.items():
-            if k not in ['last_modified']:
+        for k, v in self.spark_row.items():
+            if k not in ["last_modified"]:
                 self.unique_identifier_kw.append(k)
         self._hash = _hash(self.spark_row, self.unique_identifier_kw, False)
         self.spark_row["hash"] = str(self._hash)
@@ -435,28 +395,16 @@ class Property(dict):
         }
         props_dict = {}
         pi_md = None
-        # print (property_map.items())
         for pname, pmap_list in property_map.items():
-            #print (pname,pmap_list)
             instance = instances.get(pname, None)
-            #print ('pname',pname)
             if pname == "_metadata":
                 pi_md = md_from_map(pmap_list, configuration)
-                #props_dict["method"] = method
-                #props_dict["software"] = software
             elif instance is None:
                 raise PropertyParsingError(f"Property {pname} not found in definitions")
             else:
-                #p_info = MAIN_KEY_MAP.get(pname, None)
-            #    if p_info is None:
-                    #print(f"property {pname} not found in MAIN_KEY_MAP")
-            #        continue
                 instance = instance.copy()
-                #print (instance)
                 not_present = 0
                 for pmap_i, pmap in enumerate(pmap_list):
-                    #print (pmap.items())
-                    #print (configuration.info)
                     for key, val in pmap.items():
                         if "value" in val:
                             # Default value provided
@@ -470,7 +418,6 @@ class Property(dict):
                             # Key not found on configurations. Will be checked later
                             # data = None
                             not_present = 1
-                            missing_name = key
                             continue
 
                         if isinstance(data, (np.ndarray, list)):
@@ -488,15 +435,11 @@ class Property(dict):
                         if (val["units"] != "None") and (val["units"] is not None):
                             instance[key]["source-unit"] = val["units"]
                 # TODO: Check below
-                #print ('instance', instance)
                 if not_present:
-                    #print(f"Property {missing_name} not found in {pname}")
                     pdef_dict.pop(pname)
                     continue
                 # hack to get around OpenKIM requiring the property-name be a dict
                 prop_name_tmp = pdef_dict[pname].pop("property-name")
-
-                #print ('instance', instance)
                 check_instance_optional_key_marked_required_are_present(
                     instance, pdef_dict[pname]
                 )
@@ -520,8 +463,7 @@ class Property(dict):
         """
         # TODO: contruct empty dict from schema or just use instance instead
         row_dict = {}
-        #row_dict = _empty_dict_from_schema(property_object_schema)
-        row_dict['metadata'] = self.metadata
+        row_dict["metadata"] = self.metadata
         for key, val in self.instance.items():
             if key == "method":
                 row_dict["method"] = val
@@ -533,11 +475,11 @@ class Property(dict):
                 row_dict["configuration_id"] = val
             else:
                 for k2, v2 in val.items():
-                    if k2 in ['property-id', 'instance-id']:
+                    if k2 in ["property-id", "instance-id"]:
                         continue
                     else:
-                        row_dict[f'{key}_{k2}'.replace('-','_')] = v2['source-value']
-            '''
+                        row_dict[f"{key}_{k2}".replace("-", "_")] = v2["source-value"]
+            """
             if key == "method":
                 row_dict["method"] = val
             elif key == "software":
@@ -550,7 +492,7 @@ class Property(dict):
                 row_dict.update(prop_to_row_mapper["energy"](key, val))
             else:
                 row_dict.update(prop_to_row_mapper[key](val))
-            '''
+            """
         row_dict["last_modified"] = dateutil.parser.parse(
             datetime.datetime.now(tz=datetime.timezone.utc).strftime(
                 "%Y-%m-%dT%H:%M:%SZ"

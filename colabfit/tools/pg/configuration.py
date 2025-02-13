@@ -1,6 +1,5 @@
 import datetime
 from string import ascii_lowercase, ascii_uppercase
-#from types import NoneType
 
 import dateutil
 import numpy as np
@@ -64,9 +63,7 @@ class AtomicConfiguration(Atoms):
             "positions",
             "cell",
             "pbc",
-            #"metadata_id",
         ]
-        #self.unique_identifier_kw.extend([f"positions_{i:02d}" for i in range(1, 20)])
         self.info = info
         self.metadata = self.set_metadata(co_md_map)
         if isinstance(names, str):
@@ -77,8 +74,6 @@ class AtomicConfiguration(Atoms):
         labels = self.info.pop(ATOMS_LABELS_FIELD, None)
         if isinstance(labels, str):
             self.labels = [labels]
-        #elif not isinstance(labels, list):
-        #    raise TypeError("Labels must be a string or a list of strings or None")
         else:
             self.labels = labels
         self.spark_row = self.to_spark_row()
@@ -87,7 +82,6 @@ class AtomicConfiguration(Atoms):
 
         self.spark_row["id"] = self.id
         self.spark_row["hash"] = str(self._hash)
-        # self.spark_row["dataset_ids"] = [self.dataset_id]
         self.spark_row = self.spark_row
         # Check for name conflicts in info/arrays; would cause bug in parsing
         if set(self.info.keys()).intersection(set(self.arrays.keys())):
@@ -241,7 +235,7 @@ class AtomicConfiguration(Atoms):
             datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         )
         co_dict["atomic_numbers"] = self.numbers.astype(int).tolist()
-        #if self.metadata is not None:
+        # if self.metadata is not None:
         #    co_dict.update(self.metadata)
         co_dict.update(self.configuration_summary())
         return co_dict
@@ -285,8 +279,6 @@ class AtomicConfiguration(Atoms):
             assert len(arr) == natoms, name
             assert isinstance(arr, np.ndarray)
             config.arrays[name] = arr
-        # for k, v in atoms.arrays.items():
-        #     conf.arrays[k] = v
 
         return config
 
