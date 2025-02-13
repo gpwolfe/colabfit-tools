@@ -1766,7 +1766,8 @@ class DataManager:
         INNER JOIN
             (SELECT * FROM property_objects WHERE dataset_id = '{dataset_id}') po
         ON
-            c.id = po.configuration_id;
+            c.id = po.configuration_id
+        ORDER by configuration_id;
         """
         with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password, row_factory=dict_row) as conn:
             with conn.cursor() as curs:
