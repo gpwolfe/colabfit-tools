@@ -38,4 +38,8 @@ setup(
         "unidecode",
         "notebook",
     ],
+    extras_require={
+        "postgres": ["psycopg"],
+        "vast": ["vast", "pyspark", "pyarrow", "ibis"],
+    },
 )
