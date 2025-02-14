@@ -6,8 +6,8 @@ import pyspark.sql.functions as sf
 from unidecode import unidecode
 
 from colabfit import MAX_STRING_LENGTH
-from colabfit.tools.schema import dataset_schema
-from colabfit.tools.utilities import (
+from colabfit.tools.vast.schema import dataset_schema
+from colabfit.tools.vast.utilities import (
     ELEMENT_MAP,
     _empty_dict_from_schema,
     _hash,

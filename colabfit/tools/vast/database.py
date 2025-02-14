@@ -31,11 +31,11 @@ from tqdm import tqdm
 from vastdb.session import Session
 
 from colabfit import ID_FORMAT_STRING
-from colabfit.tools.configuration import AtomicConfiguration
-from colabfit.tools.configuration_set import ConfigurationSet
-from colabfit.tools.dataset import Dataset
-from colabfit.tools.property import Property
-from colabfit.tools.schema import (
+from colabfit.tools.vast.configuration import AtomicConfiguration
+from colabfit.tools.vast.configuration_set import ConfigurationSet
+from colabfit.tools.vast.dataset import Dataset
+from colabfit.tools.vast.property import Property
+from colabfit.tools.vast.schema import (
     co_cs_map_schema,
     config_arr_schema,
     config_md_schema,
@@ -48,7 +48,7 @@ from colabfit.tools.schema import (
     property_object_md_schema,
     property_object_schema,
 )
-from colabfit.tools.utilities import (
+from colabfit.tools.vast.utilities import (
     _hash,
     get_spark_field_type,
     spark_schema_to_arrow_schema,

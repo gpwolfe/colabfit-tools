@@ -17,9 +17,9 @@ from kim_property import (
 )
 from kim_property.definition import PROPERTY_ID as VALID_KIM_ID
 
-from colabfit.tools.configuration import AtomicConfiguration
-from colabfit.tools.schema import property_object_schema
-from colabfit.tools.utilities import (
+from colabfit.tools.vast.configuration import AtomicConfiguration
+from colabfit.tools.vast.schema import property_object_schema
+from colabfit.tools.vast.utilities import (
     _empty_dict_from_schema,
     _hash,
     _parse_unstructured_metadata,

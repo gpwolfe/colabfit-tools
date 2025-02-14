@@ -7,8 +7,8 @@ import numpy as np
 from ase import Atoms
 
 from colabfit import ATOMS_LABELS_FIELD, ATOMS_NAME_FIELD
-from colabfit.tools.schema import config_schema
-from colabfit.tools.utilities import (
+from colabfit.tools.vast.schema import config_schema
+from colabfit.tools.vast.utilities import (
     _empty_dict_from_schema,
     _hash,
     _parse_unstructured_metadata,

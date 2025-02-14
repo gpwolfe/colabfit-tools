@@ -5,8 +5,8 @@ from hashlib import sha512
 import dateutil.parser
 from pyspark.sql import functions as sf
 
-from colabfit.tools.schema import configuration_set_schema
-from colabfit.tools.utilities import ELEMENT_MAP, _empty_dict_from_schema
+from colabfit.tools.vast.schema import configuration_set_schema
+from colabfit.tools.vast.utilities import ELEMENT_MAP, _empty_dict_from_schema
 
 
 class ConfigurationSet:

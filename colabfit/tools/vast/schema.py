@@ -17,7 +17,7 @@ from pyspark.sql.types import (
     TimestampType,
 )
 
-from colabfit.tools.utilities import get_stringified_schema
+from colabfit.tools.vast.utilities import get_stringified_schema
 
 NSITES_COL_SPLITS = 20
 
