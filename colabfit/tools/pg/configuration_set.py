@@ -3,7 +3,7 @@ from hashlib import sha512
 
 import dateutil.parser
 
-from colabfit.tools.utilities import ELEMENT_MAP, _empty_dict_from_schema
+from colabfit.tools.pg.utilities import ELEMENT_MAP, _empty_dict_from_schema
 
 
 class ConfigurationSet:

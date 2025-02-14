@@ -2,7 +2,6 @@ import datetime
 import hashlib
 import json
 import itertools
-import os
 import string
 from functools import partial
 from itertools import islice
@@ -32,19 +31,15 @@ from colabfit.tools.property_definitions import (
     atomic_forces_pd,
     energy_pd,
     cauchy_stress_pd,
-    quests_descriptor_pd,
-    mask_selection_pd,
+    # quests_descriptor_pd,
+    # mask_selection_pd,
 )
-from colabfit.tools.schema import (
+from colabfit.tools.pg.schema import (
     config_schema,
     configuration_set_schema,
     dataset_schema,
-    dataset_schema,
     property_object_schema,
     co_cs_mapping_schema,
-)
-from colabfit.tools.pg.utilities import (
-    unstring_df_val,
 )
 
 VAST_BUCKET_DIR = "colabfit-data"
@@ -167,7 +162,7 @@ class DataManager:
                         )
                     )
 
-    def load_data_to_pg_in_batches(self, loader):
+    def load_data_loader_call(self, loader):
         """Load data to PostgreSQL in batches."""
         co_po_rows = self.gather_co_po_in_batches()
 
@@ -191,7 +186,7 @@ class DataManager:
                     property_object_schema,
                 )
 
-    def load_data_to_pg_in_batches_no_spark(
+    def load_data_in_batches(
         self,
         configs,
         dataset_id=None,
@@ -228,8 +223,8 @@ class DataManager:
                 t.append(co_row["dataset_ids"][0])
                 # t.append(co_row['dataset_ids'][0])
                 co_values.append(t)
-            sql_co = "INSERT INTO configurations (id, hash, last_modified, dataset_ids, configuration_set_ids, chemical_formula_hill, chemical_formula_reduced, chemical_formula_anonymous, elements, elements_ratios, atomic_numbers, nsites, nelements, nperiodic_dimensions, cell, dimension_types, pbc, names, labels, positions) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (hash) DO UPDATE SET dataset_ids = array_append(configurations.dataset_ids, %s);"
-            # TODO: Need to modify dataset.from_pg to properly aggregate values and get data to get two copie
+            sql_co = "INSERT INTO configurations (id, hash, last_modified, dataset_ids, configuration_set_ids, chemical_formula_hill, chemical_formula_reduced, chemical_formula_anonymous, elements, elements_ratios, atomic_numbers, nsites, nelements, nperiodic_dimensions, cell, dimension_types, pbc, names, labels, positions) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (hash) DO UPDATE SET dataset_ids = array_append(configurations.dataset_ids, %s);"  # noqa E501
+            # TODO: Need to modify dataset.to_row_dict to properly aggregate values and get data to get two copie
 
             # SET dataset_ids = CASE WHEN NOT (%s = ANY(configurations.dataset_ids)) THEN array_append(configurations.dataset_ids, %s) ELSE configurations.dataset_ids END;"
 
@@ -274,7 +269,7 @@ class DataManager:
                     curs.executemany(sql_co, co_values)
                     curs.executemany(sql_po, po_values)
 
-    def create_pg_ds_table(self):
+    def create_ds_table(self):
         sql = """
         CREATE TABLE datasets (
         id VARCHAR (256),
@@ -315,7 +310,7 @@ class DataManager:
                 curs.execute(sql)
 
     # currently cf-kit table with some properties removed
-    def create_pg_po_table(self):
+    def create_po_table(self):
         sql = """
         CREATE TABLE property_objects (
         id VARCHAR (256),
@@ -365,7 +360,7 @@ class DataManager:
             with conn.cursor() as curs:
                 curs.execute(sql)
 
-    def create_pg_co_table(self):
+    def create_co_table(self):
         # TODO: Metadata
         sql = """
         CREATE TABLE configurations (
@@ -401,7 +396,7 @@ class DataManager:
             with conn.cursor() as curs:
                 curs.execute(sql)
 
-    def create_pg_pd_table(self):
+    def create_pd_table(self):
         sql = """
         CREATE TABLE property_definitions (
         hash VARCHAR (256) PRIMARY KEY,
@@ -527,7 +522,7 @@ class DataManager:
                     "Configs must be an instance of either ase.Atoms or AtomicConfiguration"  # noqa E501
                 )
 
-        self.load_data_to_pg_in_batches_no_spark(
+        self.load_data_in_batches(
             converted_configs, dataset_id, config_table, prop_object_table, prop_map
         )
         self.create_dataset(
@@ -585,8 +580,8 @@ class DataManager:
         data_license: str = "CC-BY-4.0",
     ):
         # find cs_ids, co_ids, and pi_ids
-        config_df = self.dataset_query_pg(dataset_id, "configurations")
-        prop_df = self.dataset_query_pg(dataset_id, "property_objects")
+        config_df = self.dataset_query(dataset_id, "configurations")
+        prop_df = self.dataset_query(dataset_id, "property_objects")
 
         if isinstance(authors, str):
             authors = [authors]
@@ -605,7 +600,6 @@ class DataManager:
             data_license=data_license,
             configuration_set_ids=None,
             publication_year=publication_year,
-            use_pg=True,
         )
         row = ds.row_dict
 
@@ -654,7 +648,7 @@ class DataManager:
             with conn.cursor() as curs:
                 curs.execute(sql)
 
-    def update_dataset_pg_no_spark(self, configs, dataset_id, prop_map):
+    def update_dataset(self, configs, dataset_id, prop_map):
         # convert to CF AtomicConfiguration if not already
         converted_configs = []
         for c in configs:
@@ -678,20 +672,18 @@ class DataManager:
             + str(new_v_no)
         )
 
-        self.load_data_to_pg_in_batches_no_spark(
-            converted_configs, new_dataset_id, prop_map=prop_map
-        )
+        self.load_data_in_batches(converted_configs, new_dataset_id, prop_map=prop_map)
 
-        # config_df_1 = self.dataset_query_pg(dataset_id, 'configurations')
-        # prop_df_1 = self.dataset_query_pg(dataset_id, 'property_objects')
+        # config_df_1 = self.dataset_query(dataset_id, 'configurations')
+        # prop_df_1 = self.dataset_query(dataset_id, 'property_objects')
 
-        config_df_2 = self.dataset_query_pg(new_dataset_id, "configurations")
-        prop_df_2 = self.dataset_query_pg(new_dataset_id, "property_objects")
+        config_df_2 = self.dataset_query(new_dataset_id, "configurations")
+        prop_df_2 = self.dataset_query(new_dataset_id, "property_objects")
 
         # config_df_1.extend(config_df_2)
         # prop_df_1.extend(prop_df_2)
 
-        old_ds = self.get_dataset_pg(dataset_id)[0]
+        old_ds = self.get_dataset(dataset_id)[0]
 
         # format links
         s = old_ds["links"][0].split(" ")[-1].replace("'", "")
@@ -714,7 +706,6 @@ class DataManager:
             # TODO handle cs later
             configuration_set_ids=None,
             publication_year=old_ds["publication_year"],
-            use_pg=True,
         )
         row = ds.row_dict
 
@@ -790,7 +781,7 @@ class DataManager:
                 except:
                     return
 
-    def dataset_query_pg(
+    def dataset_query(
         self,
         dataset_id=None,
         table_name=None,
@@ -824,7 +815,7 @@ class DataManager:
                 r = curs.execute(sql)
                 return curs.fetchall()
 
-    def get_dataset_pg(self, dataset_id):
+    def get_dataset(self, dataset_id):
         sql = f"""
                 SELECT *
                 FROM datasets
@@ -1092,7 +1083,7 @@ def read_md_partition(partition, config):
 
 
 '''
-def dataset_query_pg(
+def dataset_query(
     dataset_id=None,
     table_name=None,
 ):
@@ -1116,7 +1107,7 @@ def dataset_query_pg(
             r = curs.execute(sql)
             return curs.fetchall()
 
-def get_dataset_pg(dataset_id):
+def get_dataset(dataset_id):
     sql = f"""
             SELECT *
             FROM datasets

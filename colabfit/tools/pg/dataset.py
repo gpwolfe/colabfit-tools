@@ -5,7 +5,7 @@ import dateutil
 from unidecode import unidecode
 
 from colabfit import MAX_STRING_LENGTH
-from colabfit.tools.utilities import ELEMENT_MAP, _hash
+from colabfit.tools.pg.utilities import ELEMENT_MAP, _hash
 
 import numpy as np
 
@@ -85,7 +85,6 @@ class Dataset:
         configuration_set_ids: list[str] = [],
         data_license: str = "CC-BY-ND-4.0",
         publication_year: str = None,
-        use_pg: bool = False,  # TODO: remove this
     ):
         for auth in authors:
             if not "".join(auth.split(" ")[-1].replace("-", "")).isalpha():
@@ -107,7 +106,7 @@ class Dataset:
         self.configuration_set_ids = configuration_set_ids
         if self.configuration_set_ids is None:
             self.configuration_set_ids = []
-        self.row_dict = self._from_pg(configs=config_df, props=prop_df)
+        self.row_dict = self.to_row_dict(configs=config_df, props=prop_df)
         self.row_dict["id"] = self.dataset_id
 
         id_prefix = "__".join(
@@ -126,7 +125,7 @@ class Dataset:
         self.row_dict["labels"] = labels
 
     # aggregate stuff
-    def _from_pg(self, configs, props):
+    def to_row_dict(self, configs, props):
         row_dict = {}
         row_dict["last_modified"] = dateutil.parser.parse(
             datetime.datetime.now(tz=datetime.timezone.utc).strftime(

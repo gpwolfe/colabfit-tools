@@ -46,7 +46,7 @@ def _hash(row, identifying_key_list, include_keys_in_hash=False):
 
 def _empty_dict_from_schema(schema):
     empty_dict = {}
-    for field in schema:
+    for field in schema.columns:
         empty_dict[field.name] = None
     return empty_dict
 

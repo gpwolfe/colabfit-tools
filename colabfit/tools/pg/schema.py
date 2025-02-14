@@ -1,8 +1,4 @@
 """
-Each schema for VastDB has a corresponding schema for a dataframe with
-the same fields, but with non-stringified lists.
-config_schema (with stringified lists), for example, has a corresponding
-config_df_schema (with non-stringified lists).
 """
 
 from collections import namedtuple
@@ -37,8 +33,8 @@ class Schema:
 config_schema = Schema(
     name="configuration",
     columns=[
-        column("id", "VARCHAR (256)", True),
-        column("hash", "VARCHAR (256)", True),
+        column("id", "VARCHAR (256)", False),
+        column("hash", "VARCHAR (256) PRIMARY KEY", True),
         column("last_modified", "VARCHAR (256)", True),
         column("dataset_ids", "VARCHAR (256) []", True),
         column("configuration_set_ids", "VARCHAR (256) []", True),
@@ -66,8 +62,8 @@ config_md_schema = config_schema.add(column("metadata", "VARCHAR (10000)", True)
 property_object_schema = Schema(
     name="property_object",
     columns=[
-        column("id", "VARCHAR (256)", True),
-        column("hash", "VARCHAR (256)", True),
+        column("id", "VARCHAR (256)", False),
+        column("hash", "VARCHAR (256) PRIMARY KEY", True),
         column("last_modified", "VARCHAR (256)", True),
         column("configuration_id", "VARCHAR (256)", True),
         column("dataset_id", "VARCHAR (256)", True),
@@ -93,11 +89,11 @@ property_object_md_schema = property_object_schema.add(
     column("metadata", "VARCHAR (10000)", True)
 )
 
-dataset_df_schema = Schema(
+dataset_schema = Schema(
     name="dataset",
     columns=[
-        column("id", "VARCHAR (256)", True),
-        column("hash", "VARCHAR (256) PRIMARY KEY", True),
+        column("id", "VARCHAR (256)", False),
+        column("hash", "VARCHAR (256) PRIMARY KEY", False),
         column("name", "VARCHAR (256)", True),
         column("last_modified", "VARCHAR (256)", True),
         column("nconfigurations", "INT", True),
@@ -130,9 +126,9 @@ dataset_df_schema = Schema(
 
 configuration_set_schema = Schema(
     name="configuration_set",
-    column=[
-        column("id", "VARCHAR (256)", True),
-        column("hash", "VARCHAR (256)", True),
+    columns=[
+        column("id", "VARCHAR (256)", False),
+        column("hash", "VARCHAR (256) PRIMARY KEY", False),
         column("last_modified", "VARCHAR (256)", True),
         column("nconfigurations", "INT", True),
         column("nperiodic_dimensions", "INT []", True),

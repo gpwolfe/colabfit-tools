@@ -18,8 +18,8 @@ from kim_property import (
 from kim_property.create import KIM_PROPERTIES
 from kim_property.definition import PROPERTY_ID as VALID_KIM_ID
 
-from colabfit.tools.configuration import AtomicConfiguration
-from colabfit.tools.utilities import _hash
+from colabfit.tools.pg.configuration import AtomicConfiguration
+from colabfit.tools.pg.utilities import _hash
 
 EDN_KEY_MAP = {
     "energy": "unrelaxed-potential-energy",
