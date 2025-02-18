@@ -1580,6 +1580,7 @@ class DataManager:
             doi,
             labels,
             data_license,
+            property_map = prop_map,
         )
         return dataset_id
 
@@ -1601,6 +1602,18 @@ class DataManager:
                 curs.execute(query, (table_name,))
                 schema = curs.fetchall()
                 return schema
+    
+    def get_dataset_property_map(self, dataset_id):
+        query = """
+             SELECT property_map
+             FROM datasets
+             WHERE id = %s;
+        """
+        with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password) as conn:
+            with conn.cursor() as curs:
+                curs.execute(query, (dataset_id,))
+                result = curs.fetchall()
+                return result[0][0] 
 
     def create_dataset_pg_no_spark(self,
         name: str,
@@ -1614,6 +1627,7 @@ class DataManager:
         doi: str = None,
         labels: list[str] = None,
         data_license: str = "CC-BY-4.0",
+        property_map: dict = None,
     ):
         # find cs_ids, co_ids, and pi_ids
         config_df = self.dataset_query_pg(dataset_id, 'configurations')
@@ -1641,15 +1655,14 @@ class DataManager:
         row = ds.spark_row
 
         sql = """
-            INSERT INTO datasets (last_modified, nconfigurations, nproperty_objects, nsites, nelements, elements, total_elements_ratio, nperiodic_dimensions, dimension_types, energy_mean, energy_variance, atomic_forces_count, cauchy_stress_count, energy_count, authors, description, license, links, name, publication_year, doi, id, extended_id, hash, labels)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,%s, %s)
+            INSERT INTO datasets (last_modified, nconfigurations, nproperty_objects, nsites, nelements, elements, total_elements_ratio, nperiodic_dimensions, dimension_types, energy_mean, energy_variance, atomic_forces_count, cauchy_stress_count, energy_count, authors, description, license, links, name, publication_year, doi, id, extended_id, hash, labels, property_map)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,%s, %s, %s)
             ON CONFLICT (hash)
             DO NOTHING
         """
         
         column_headers = tuple(row.keys())
         values = []
-        t = []
         for column in column_headers:
             if column in ['nconfiguration_sets']:
                 pass
@@ -1657,13 +1670,16 @@ class DataManager:
                 val = row[column]
                 if column == 'last_modified':
                     val = val.strftime("%Y-%m-%dT%H:%M:%SZ")
-                t.append(val)
-            values.append(t)
+                values.append(val)
+                #print ('val here',val)
+                #print ('t here',t)
+                
 
+        values.append(json.dumps(property_map))
 
         with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password) as conn:
             with conn.cursor() as curs:
-                curs.executemany(sql, values)
+                curs.executemany(sql, [values])
 
     def insert_new_column(self, table, column_name, data_type):
         sql = f"""
@@ -1731,8 +1747,8 @@ class DataManager:
         row = ds.spark_row
 
         sql = """
-            INSERT INTO datasets (last_modified, nconfigurations, nproperty_objects, nsites, nelements, elements, total_elements_ratio, nperiodic_dimensions, dimension_types, energy_mean, energy_variance, atomic_forces_count, cauchy_stress_count, energy_count, authors, description, license, links, name, publication_year, doi, id, extended_id, hash, labels)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,%s, %s)
+            INSERT INTO datasets (last_modified, nconfigurations, nproperty_objects, nsites, nelements, elements, total_elements_ratio, nperiodic_dimensions, dimension_types, energy_mean, energy_variance, atomic_forces_count, cauchy_stress_count, energy_count, authors, description, license, links, name, publication_year, doi, id, extended_id, hash, labels, property_map)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,%s, %s, %s)
             ON CONFLICT (hash)
             DO NOTHING
         """
@@ -1747,13 +1763,12 @@ class DataManager:
                 val = row[column]
                 if column == 'last_modified':
                     val = val.strftime("%Y-%m-%dT%H:%M:%SZ")
-                t.append(val)
-            values.append(t)
-
-
+                values.append(val)
+        values.append(json.dumps(prop_map))
+       
         with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password) as conn:
             with conn.cursor() as curs:
-                curs.executemany(sql, values)
+                curs.executemany(sql, [values])
                 return new_dataset_id
 
     def get_dataset_data(self, dataset_id):
