@@ -702,7 +702,7 @@ class VastDataLoader:
                 .distinct()
             )
             spark_df = self.spark.table(self.config_table).join(
-                sf.broadcast(id_df), on="id", how="inner"
+                id_df, on="id", how="inner"
             )
         elif table_name == self.prop_object_table or table_name == self.config_set_table:
             spark_df = self.spark.table(table_name).filter(
@@ -990,15 +990,44 @@ class DataManager:
                 )
             )
 
-    def load_co_po_to_vastdb(self, loader, batching_ingest=False):
+    def deduplicate_po_df(self, po_df):
+        """Aggregate multiplicity for PO dataframe with duplicate IDS."""
+        multiplicity = po_df.groupBy("id").agg(sf.count("*").alias("count"))
+        po_df = po_df.dropDuplicates(["id"])
+        po_df = (
+            po_df.join(multiplicity, on="id", how="inner")
+            .withColumn("multiplicity", sf.col("count"))
+            .drop("count")
+        )
+        po_df = po_df.select(property_object_md_schema.fieldNames())
+        return po_df
+
+    def deduplicate_co_df(self, co_df):
+        """Combine values across duplicate CO rows."""
+        grouped_id = co_df.groupBy("id")
+        merged_names = grouped_id.agg(
+            sf.array_distinct(sf.flatten(sf.collect_list("names"))).alias("names")
+        )
+        co_df = co_df.dropDuplicates(["id"])
+        co_df = co_df.drop("names").join(merged_names, on="id", how="inner")
+        if co_df.select("labels").filter(sf.col("labels").isNotNull()).count() > 0:
+            merged_labels = grouped_id.agg(
+                sf.array_distinct(sf.flatten(sf.collect_list("labels"))).alias("labels")
+            )
+            co_df = co_df.drop("labels").join(merged_labels, on="id", how="inner")
+        co_df = co_df.select(config_md_schema.fieldNames())
+        return co_df
+
+    def check_existing_tables(self, loader, batching_ingest=False):
+        """Check tables for conficts before loading data."""
         if loader.spark.catalog.tableExists(loader.prop_object_table):
             print(f"table {loader.prop_object_table} exists")
             if batching_ingest is False:
                 pos_with_mult = loader.read_table(loader.prop_object_table)
                 pos_with_mult = pos_with_mult.filter(
-                    sf.col("dataset_id") == self.dataset_id
+                    (sf.col("dataset_id") == self.dataset_id)
+                    & (sf.col("multiplicity") > 0)
                 )
-                pos_with_mult = pos_with_mult.filter(sf.col("multiplicity") > 0).limit(1)
                 if pos_with_mult.count() > 0:
                     raise ValueError(
                         f"POs for dataset with ID {self.dataset_id} already exist in "
@@ -1012,6 +1041,9 @@ class DataManager:
             )
             if dataset_exists.count() > 0:
                 raise ValueError(f"Dataset with ID {self.dataset_id} already exists.")
+
+    def load_co_po_to_vastdb(self, loader, batching_ingest=False):
+        self.check_existing_tables(loader, batching_ingest)
         co_po_rows = self.gather_co_po_in_batches_no_pool()
         for co_po_batch in tqdm(
             co_po_rows,
@@ -1027,47 +1059,20 @@ class DataManager:
                     po_rows, schema=property_object_md_schema
                 )
                 co_count = co_df.count()
-                print("Dropping duplicates from CO dataframe")
-
                 co_count_distinct = co_df.select("id").distinct().count()
                 if co_count_distinct < co_count:
-                    grouped_id = co_df.groupBy("id")
-                    merged_names = grouped_id.agg(
-                        sf.array_distinct(sf.flatten(sf.collect_list("names"))).alias(
-                            "names"
-                        )
+                    print(
+                        f"{co_count - co_count_distinct} duplicates found in CO dataframe"  # noqa E501
                     )
-                    co_df = co_df.dropDuplicates(["id"])
-                    co_df = co_df.drop("names").join(merged_names, on="id", how="inner")
-                    if (
-                        co_df.select("labels")
-                        .filter(sf.col("labels").isNotNull())
-                        .count()
-                        > 0
-                    ):
-                        merged_labels = grouped_id.agg(
-                            sf.array_distinct(
-                                sf.flatten(sf.collect_list("labels"))
-                            ).alias("labels")
-                        )
-                        co_df = co_df.drop("labels").join(
-                            merged_labels, on="id", how="inner"
-                        )
-                    co_df = co_df.select(config_md_schema.fieldNames())
-                print(f"{co_count - co_count_distinct} duplicates found in CO dataframe")
+                    co_df = self.deduplicate_co_df(co_df)
+
                 po_count = po_df.count()
                 po_count_distinct = po_df.select("id").distinct().count()
                 if po_count_distinct < po_count:
                     print(
                         f"{po_count - po_count_distinct} duplicates found in PO dataframe"  # noqa
                     )
-                    multiplicity = po_df.groupBy("id").agg(sf.count("*").alias("count"))
-                    po_df = po_df.dropDuplicates(["id"])
-                    po_df = (
-                        po_df.join(multiplicity, on="id", how="inner")
-                        .withColumn("multiplicity", sf.col("count"))
-                        .drop("count")
-                    )
+                    po_df = self.deduplicate_po_df(po_df)
                 co_existing_row_df = loader.write_table_first(
                     co_df,
                     loader.config_table,
@@ -1187,6 +1192,7 @@ class DataManager:
                     df=co_row_update_df,
                     table_name=loader.config_table,
                     cols=["configuration_set_ids"],
+                    elems=[None],
                     str_schema=config_schema,
                     arr_schema=config_arr_schema,
                 )
@@ -1206,6 +1212,7 @@ class DataManager:
                 df=co_row_update_df,
                 table_name=loader.config_table,
                 cols=["configuration_set_ids"],
+                elems=[None],
                 str_schema=config_schema,
                 arr_schema=config_arr_schema,
             )
