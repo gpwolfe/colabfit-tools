@@ -55,6 +55,8 @@ from colabfit.tools.vast.utilities import (
     split_long_string_cols,
     stringify_df_val_udf,
     unstring_df_val,
+    str_to_arrayof_int,
+    str_to_arrayof_str,
 )
 
 VAST_BUCKET_DIR = "colabfit-data"
@@ -478,7 +480,7 @@ class VastDataLoader:
                     if df.filter(sf.col("labels").isNotNull()).count() == 0:
                         continue
                     duplicate_df = self.concat_column_vals(df, duplicate_df, col)
-                elif col == "names":
+                elif col in ["names", "configuration_set_ids"]:
                     duplicate_df = self.concat_column_vals(df, duplicate_df, col)
                 elif col == "multiplicity":
                     duplicate_df = self.increment_multiplicity(df, duplicate_df)
@@ -640,12 +642,14 @@ class VastDataLoader:
                     columns=["multiplicity", "last_modified"],
                 )
 
-    def simple_sdk_query(self, query_table, predicate, schema, internal_row_id=False):
+    def simple_sdk_query(
+        self, query_table, predicate, schema, internal_row_id=False, columns=None
+    ):
         bucket_name, schema_name, table_n = self._get_table_split(query_table)
         with self.session.transaction() as tx:
             table = tx.bucket(bucket_name).schema(schema_name).table(table_n)
             rec_batch_reader = table.select(
-                predicate=predicate, internal_row_id=internal_row_id
+                predicate=predicate, internal_row_id=internal_row_id, columns=columns
             )
             rec_batch = rec_batch_reader.read_all()
             if rec_batch.num_rows == 0:
@@ -708,7 +712,6 @@ class VastDataLoader:
 
     def config_set_query(
         self,
-        query_table,
         dataset_id=None,
         name_match=None,
         label_match=None,
@@ -716,66 +719,51 @@ class VastDataLoader:
     ):
         if dataset_id is None:
             raise ValueError("dataset_id must be provided")
-        string_schema_dict = {
-            self.config_table: config_schema,
-            self.config_set_table: configuration_set_schema,
-            self.dataset_table: dataset_schema,
-            self.prop_object_table: property_object_schema,
-        }
-        df_schema = string_schema_dict[query_table]
-        if query_table == self.config_table:
-            spark_df = None
-            co_ids = (
-                self.spark.table(self.prop_object_table)
-                .filter(sf.col("dataset_id") == dataset_id)
-                .select("configuration_id")
-            )
-            co_id_batches = batched(
-                sorted([x["configuration_id"] for x in co_ids.collect()]), 10000
-            )
-            for co_id_batch in co_id_batches:
-                if name_match is None and label_match is None:
-                    predicate = _.id.isin(co_id_batch)
-                if name_match is not None and label_match is not None:
-                    predicate = (
-                        (_.id.isin(co_id_batch))
-                        & (_.names.contains(name_match))
-                        & (_.labels.contains(label_match))
-                    )
-                elif name_match is not None:
-                    predicate = (_.id.isin(co_id_batch)) & (_.names.contains(name_match))
-                else:
-                    predicate = (_.id.isin(co_id_batch)) & (
-                        _.labels.contains(label_match)
-                    )
-                if spark_df is None:
-                    spark_df = self.simple_sdk_query(query_table, predicate, df_schema)
-                else:
-                    spark_df = spark_df.union(
-                        self.simple_sdk_query(query_table, predicate, df_schema)
-                    )
-            return spark_df
-        elif query_table == self.prop_object_table:
-            if configuration_ids is None:
-                predicate = _.dataset_id == dataset_id
-                spark_df = self.simple_sdk_query(query_table, predicate, df_schema)
-            if configuration_ids is not None and len(configuration_ids) < 10000:
-                predicate = (_.dataset_id == dataset_id) & (
-                    _.configuration_id.isin(configuration_ids)
+        config_df_cols = [
+            "id",
+            "nsites",
+            "elements",
+            "nperiodic_dimensions",
+            "dimension_types",
+            "atomic_numbers",
+        ]
+        spark_df = None
+        co_ids = (
+            self.spark.table(self.prop_object_table)
+            .filter(sf.col("dataset_id") == dataset_id)
+            .select("configuration_id")
+        )
+        co_id_batches = batched(
+            sorted([x["configuration_id"] for x in co_ids.collect()]), 10000
+        )
+        for co_id_batch in co_id_batches:
+            if name_match is None and label_match is None:
+                predicate = _.id.isin(co_id_batch)
+            if name_match is not None and label_match is not None:
+                predicate = (
+                    (_.id.isin(co_id_batch))
+                    & (_.names.contains(name_match))
+                    & (_.labels.contains(label_match))
                 )
-                spark_df = self.simple_sdk_query(query_table, predicate, df_schema)
+            elif name_match is not None:
+                predicate = (_.id.isin(co_id_batch)) & (_.names.contains(name_match))
             else:
-                config_id_batches = batched(configuration_ids, 10000)
-                spark_df = self.spark.createDataFrame([], schema=df_schema)
-                for batch in config_id_batches:
-                    predicate = (_.dataset_id == dataset_id) & (
-                        _.configuration_id.isin(batch)
+                predicate = (_.id.isin(co_id_batch)) & (_.labels.contains(label_match))
+            if spark_df is None:
+                spark_df = self.simple_sdk_query(
+                    self.config_table, predicate, config_schema, columns=config_df_cols
+                )
+            else:
+                spark_df = spark_df.union(
+                    self.simple_sdk_query(
+                        self.config_table,
+                        predicate,
+                        config_schema,
+                        columns=config_df_cols,
                     )
-                    batch_spark_df = self.simple_sdk_query(
-                        query_table, predicate, df_schema
-                    )
-                    spark_df = spark_df.union(batch_spark_df)
-            return spark_df
+                )
+
+        return spark_df
 
     def rehash_property_objects(spark_row: Row):
         """
@@ -1134,7 +1122,6 @@ class DataManager:
                 f"cs_name: {cs_name}, cs_desc: {cs_desc}"
             )
             config_set_query_df = loader.config_set_query(
-                query_table=loader.config_table,
                 dataset_id=dataset_id,
                 name_match=names_match,
                 label_match=label_match,
@@ -1147,21 +1134,22 @@ class DataManager:
             string_cols = [
                 "elements",
             ]
-            unstring_col_udf = sf.udf(unstring_df_val, ArrayType(StringType()))
-
-            for col in string_cols:
-                config_set_query_df = config_set_query_df.withColumn(
-                    col, unstring_col_udf(sf.col(col))
-                )
-            unstring_col_udf = sf.udf(unstring_df_val, ArrayType(IntegerType()))
+            config_set_query_df = config_set_query_df.select(
+                [
+                    col if col not in string_cols else str_to_arrayof_str(col).alias(col)
+                    for col in config_set_query_df.columns
+                ]
+            )
             int_cols = [
                 "atomic_numbers",
                 "dimension_types",
             ]
-            for col in int_cols:
-                config_set_query_df = config_set_query_df.withColumn(
-                    col, unstring_col_udf(sf.col(col))
-                )
+            config_set_query_df = config_set_query_df.select(
+                [
+                    col if col not in int_cols else str_to_arrayof_int(col).alias(col)
+                    for col in config_set_query_df.columns
+                ]
+            )
             t = time()
             prelim_cs_id = f"CS_{cs_name}_{self.dataset_id}"
             co_cs_df = loader.get_co_cs_mapping(prelim_cs_id)
@@ -1189,6 +1177,9 @@ class DataManager:
             else:
                 co_cs_write_df = co_cs_write_df.union(co_cs_df)
             # loader.write_table(co_cs_df, loader.co_cs_map_table, check_unique=False)
+            config_set_query_df = config_set_query_df.withColumn(
+                "configuration_set_ids", sf.array(sf.lit(config_set.id))
+            )
             if co_row_update_df is None:
                 co_row_update_df = config_set_query_df
             elif co_row_update_df.count() > 10000:
@@ -1196,7 +1187,6 @@ class DataManager:
                     df=co_row_update_df,
                     table_name=loader.config_table,
                     cols=["configuration_set_ids"],
-                    elems=[config_set.id],
                     str_schema=config_schema,
                     arr_schema=config_arr_schema,
                 )
@@ -1216,7 +1206,6 @@ class DataManager:
                 df=co_row_update_df,
                 table_name=loader.config_table,
                 cols=["configuration_set_ids"],
-                elems=[config_set.id],
                 str_schema=config_schema,
                 arr_schema=config_arr_schema,
             )

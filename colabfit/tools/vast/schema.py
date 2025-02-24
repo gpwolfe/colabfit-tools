@@ -2,7 +2,7 @@
 Each schema for VastDB has a corresponding schema for a dataframe with
 the same fields, but with non-stringified lists.
 config_schema (with stringified lists), for example, has a corresponding
-config_schema (with non-stringified lists).
+config_arr_schema (with non-stringified lists).
 """
 
 from pyspark.sql.types import (
@@ -21,7 +21,7 @@ from colabfit.tools.vast.utilities import get_stringified_schema
 
 NSITES_COL_SPLITS = 20
 
-config_schema = StructType(
+config_arr_schema = StructType(
     [
         StructField("id", StringType(), True),
         StructField("hash", StringType(), True),
@@ -52,11 +52,11 @@ config_schema = StructType(
         for i in range(NSITES_COL_SPLITS)
     ]
 )
-config_schema = get_stringified_schema(config_schema)
-config_md_schema = config_schema.add(StructField("metadata", StringType(), True))
+config_schema = get_stringified_schema(config_arr_schema)
+config_md_schema = config_arr_schema.add(StructField("metadata", StringType(), True))
 
 
-property_object_schema = StructType(
+property_object_arr_schema = StructType(
     [
         StructField("id", StringType(), True),
         StructField("hash", StringType(), True),
@@ -89,13 +89,13 @@ property_object_schema = StructType(
     ]
 )
 
-property_object_schema = get_stringified_schema(property_object_schema)
-property_object_md_schema = property_object_schema.add(
+property_object_schema = get_stringified_schema(property_object_arr_schema)
+property_object_md_schema = property_object_arr_schema.add(
     StructField("metadata", StringType(), True)
 )
 
 
-dataset_schema = StructType(
+dataset_arr_schema = StructType(
     [
         StructField("id", StringType(), True),
         StructField("hash", StringType(), True),
@@ -129,10 +129,10 @@ dataset_schema = StructType(
     ]
 )
 
-dataset_schema = get_stringified_schema(dataset_schema)
+dataset_schema = get_stringified_schema(dataset_arr_schema)
 
 
-configuration_set_schema = StructType(
+configuration_set_arr_schema = StructType(
     [
         StructField("id", StringType(), True),
         StructField("hash", StringType(), True),
@@ -152,7 +152,7 @@ configuration_set_schema = StructType(
     ]
 )
 
-configuration_set_schema = get_stringified_schema(configuration_set_schema)
+configuration_set_schema = get_stringified_schema(configuration_set_arr_schema)
 
 co_cs_map_schema = StructType(
     [

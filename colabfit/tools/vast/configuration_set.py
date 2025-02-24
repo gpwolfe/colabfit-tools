@@ -55,7 +55,7 @@ class ConfigurationSet:
         self.id = f"CS_{self.name}_{self.dataset_id}"
         self._hash = hash(self)
         self.row_dict["id"] = self.id
-        self.row_dict["extended_id"] = f"{self.name}__{self.id}"
+        self.row_dict["extended_id"] = self.id
         self.row_dict["hash"] = str(self._hash)
 
     def to_row_dict(self, config_df):
