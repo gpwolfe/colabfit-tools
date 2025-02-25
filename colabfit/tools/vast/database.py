@@ -726,15 +726,21 @@ class VastDataLoader:
             "dimension_types",
             "atomic_numbers",
         ]
+        read_schema = StructType(
+            [field for field in config_schema.fields if field.name in config_df_cols]
+        )
         spark_df = None
-        co_ids = (
-            self.spark.table(self.prop_object_table)
-            .filter(sf.col("dataset_id") == dataset_id)
-            .select("configuration_id")
-        )
-        co_id_batches = batched(
-            sorted([x["configuration_id"] for x in co_ids.collect()]), 10000
-        )
+        if configuration_ids is not None:
+            co_id_batches = configuration_ids
+        else:
+            co_ids = (
+                self.spark.table(self.prop_object_table)
+                .filter(sf.col("dataset_id") == dataset_id)
+                .select("configuration_id")
+                .collect()
+            )
+            co_ids = [x["configuration_id"] for x in co_ids]
+        co_id_batches = batched(sorted(co_ids), 10000)
         for co_id_batch in co_id_batches:
             if name_match is None and label_match is None:
                 predicate = _.id.isin(co_id_batch)
@@ -750,14 +756,14 @@ class VastDataLoader:
                 predicate = (_.id.isin(co_id_batch)) & (_.labels.contains(label_match))
             if spark_df is None:
                 spark_df = self.simple_sdk_query(
-                    self.config_table, predicate, config_schema, columns=config_df_cols
+                    self.config_table, predicate, read_schema, columns=config_df_cols
                 )
             else:
                 spark_df = spark_df.union(
                     self.simple_sdk_query(
                         self.config_table,
                         predicate,
-                        config_schema,
+                        read_schema,
                         columns=config_df_cols,
                     )
                 )
