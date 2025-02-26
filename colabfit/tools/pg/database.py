@@ -71,15 +71,27 @@ def batched(configs, n):
 class DataManager:
     def __init__(
         self,
-        dbname,
-        user,
-        port,
-        host,
-        password=None,
+        dbname: str,
+        user: str,
+        port: int,
+        host: str,
+        password: str = None,
         nprocs: int = 1,
         standardize_energy: bool = False,
-        read_write_batch_size=10000,
+        read_write_batch_size: int = 10000,
     ):
+        """
+        Args:
+            dbname (str): Name of the database.
+            user (str): User name.
+            port (int): Port number.
+            host (str): Host name.
+            password (str): Password.
+            nprocs (int): Number of processes to use if using multiprocessing
+                (i.e. while reading data files).
+            standardize_energy (bool): Whether to standardize energy.
+            read_write_batch_size (int): Batch size for reading and writing data.
+        """
         self.dbname = dbname
         self.user = user
         self.port = port
