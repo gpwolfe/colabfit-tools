@@ -1702,9 +1702,11 @@ class DataManager:
             else:
                 raise Exception("Configs must be an instance of either ase.Atoms or AtomicConfiguration")
         # update dataset_id
-        # TODO: Change so it iterates from largest version
-        v_no = dataset_id.split('_')[-1]
-        new_v_no = int(v_no) + 1
+        family = dataset_id.split('_')[1]
+        q = f"SELECT id FROM datasets where id LIKE '%{family}%'"
+        res = self.general_query(q)
+        largest_version = sorted([r['id'].split('_')[-1] for r in res])[-1]
+        new_v_no = int(largest_version) + 1
         new_dataset_id = dataset_id.split('_')[0] + '_' + dataset_id.split('_')[1] + '_' + str(new_v_no)
         
         self.load_data_to_pg_in_batches_no_spark(converted_configs, new_dataset_id, prop_map=prop_map)
