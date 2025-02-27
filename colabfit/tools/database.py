@@ -1388,7 +1388,8 @@ class DataManager:
         license VARCHAR (256),
         links VARCHAR (1000) [],
         publication_year VARCHAR (256),
-        doi VARCHAR (256)
+        doi VARCHAR (256),
+        uploader  VARCHAR (256)
         )
         """
         with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password) as conn:
@@ -1615,6 +1616,18 @@ class DataManager:
                 result = curs.fetchall()
                 return result[0][0] 
 
+    def get_dataset_name_from_id(self, dataset_id):
+        query = """
+             SELECT name
+             FROM datasets
+             WHERE id = %s;
+        """
+        with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password) as conn:
+            with conn.cursor() as curs:
+                curs.execute(query, (dataset_id,))
+                result = curs.fetchall()
+                return result[0][0]
+
     def create_dataset_pg_no_spark(self,
         name: str,
         dataset_id: str,
@@ -1653,10 +1666,10 @@ class DataManager:
             use_pg = True,
         )
         row = ds.spark_row
-
+        user = os.getlogin()
         sql = """
-            INSERT INTO datasets (last_modified, nconfigurations, nproperty_objects, nsites, nelements, elements, total_elements_ratio, nperiodic_dimensions, dimension_types, energy_mean, energy_variance, atomic_forces_count, cauchy_stress_count, energy_count, authors, description, license, links, name, publication_year, doi, id, extended_id, hash, labels, property_map)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,%s, %s, %s)
+            INSERT INTO datasets (last_modified, nconfigurations, nproperty_objects, nsites, nelements, elements, total_elements_ratio, nperiodic_dimensions, dimension_types, energy_mean, energy_variance, atomic_forces_count, cauchy_stress_count, energy_count, authors, description, license, links, name, publication_year, doi, id, extended_id, hash, labels, property_map, uploader)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,%s, %s, %s, %s)
             ON CONFLICT (hash)
             DO NOTHING
         """
@@ -1676,6 +1689,7 @@ class DataManager:
                 
 
         values.append(json.dumps(property_map))
+        values.append(user)
 
         with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password) as conn:
             with conn.cursor() as curs:
@@ -1749,8 +1763,8 @@ class DataManager:
         row = ds.spark_row
 
         sql = """
-            INSERT INTO datasets (last_modified, nconfigurations, nproperty_objects, nsites, nelements, elements, total_elements_ratio, nperiodic_dimensions, dimension_types, energy_mean, energy_variance, atomic_forces_count, cauchy_stress_count, energy_count, authors, description, license, links, name, publication_year, doi, id, extended_id, hash, labels, property_map)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,%s, %s, %s)
+            INSERT INTO datasets (last_modified, nconfigurations, nproperty_objects, nsites, nelements, elements, total_elements_ratio, nperiodic_dimensions, dimension_types, energy_mean, energy_variance, atomic_forces_count, cauchy_stress_count, energy_count, authors, description, license, links, name, publication_year, doi, id, extended_id, hash, labels, property_map, uploader)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,%s, %s, %s, %s)
             ON CONFLICT (hash)
             DO NOTHING
         """
@@ -1767,6 +1781,7 @@ class DataManager:
                     val = val.strftime("%Y-%m-%dT%H:%M:%SZ")
                 values.append(val)
         values.append(json.dumps(prop_map))
+        values.append(os.getlogin())
        
         with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password) as conn:
             with conn.cursor() as curs:
@@ -2026,15 +2041,30 @@ class DataManager:
         loader.write_table(ds_df, loader.dataset_table)
     
     def delete_dataset(self, dataset_id):
+        # check if user matches original uploader
         sql = """
-            DELETE
+            SELECT uploader
             FROM datasets
             WHERE id = %s;
         """
-        # TODO: delete children as well
         with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password) as conn:
             with conn.cursor() as curs:
                 curs.execute(sql, (dataset_id,))
+                uploader = curs.fetchall()[0][0]
+
+        if uploader == os.getlogin():
+            print (f'Deleting {dataset_id}')
+            sql = """
+                DELETE
+                FROM datasets
+                WHERE id = %s;
+            """
+            # TODO: delete children as well
+            with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password) as conn:
+                with conn.cursor() as curs:
+                    curs.execute(sql, (dataset_id,))
+        else:
+            raise Exception(f'Cannot delete dataset. User must match the original uploader, {uploader}.')
 
 
 class S3BatchManager:
