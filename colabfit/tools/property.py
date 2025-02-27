@@ -411,6 +411,7 @@ class Property(dict):
         configuration,
         property_map,
         standardize_energy=False,
+        strict=False,
     ):
         """
         A function for constructing a Property given a property setting hash, a property
@@ -490,9 +491,12 @@ class Property(dict):
                 # TODO: Check below
                 #print ('instance', instance)
                 if not_present:
+                    if strict:
+                        raise Exception(f'Ingestion is set to strict, but some configurations are missing {missing_name}')
                     #print(f"Property {missing_name} not found in {pname}")
-                    pdef_dict.pop(pname)
-                    continue
+                    else:
+                        pdef_dict.pop(pname)
+                        continue
                 # hack to get around OpenKIM requiring the property-name be a dict
                 prop_name_tmp = pdef_dict[pname].pop("property-name")
 

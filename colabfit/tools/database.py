@@ -1060,6 +1060,7 @@ class DataManager:
         prop_map: dict,
         dataset_id,
         standardize_energy: bool = True,
+        strict: bool = False,
     ):
         """Convert COs and DOs to Spark rows."""
         co_po_rows = []
@@ -1072,6 +1073,7 @@ class DataManager:
                 configuration=config,
                 property_map=prop_map,
                 standardize_energy=standardize_energy,
+                strict=strict,
             )
             co_po_rows.append(
                 (
@@ -1082,7 +1084,7 @@ class DataManager:
         return co_po_rows
 
     def gather_co_po_rows_pool(
-        self, config_chunks: list[list[AtomicConfiguration]], pool, dataset_id=None, prop_map=None,
+        self, config_chunks: list[list[AtomicConfiguration]], pool, dataset_id=None, prop_map=None, strict=False,
     ):
         """
         Wrapper for _gather_co_po_rows.
@@ -1099,10 +1101,11 @@ class DataManager:
             prop_map=prop_map,
             dataset_id=dataset_id,
             standardize_energy=self.standardize_energy,
+            strict=strict
         )
         return itertools.chain.from_iterable(pool.map(part_gather, list(config_chunks)))
 
-    def gather_co_po_in_batches(self, configs, dataset_id=None, prop_map=None):
+    def gather_co_po_in_batches(self, configs, dataset_id=None, prop_map=None, strict=False):
         """
         Wrapper function for gather_co_po_rows_pool.
         Yields batches of CO-DO rows, preventing configuration iterator from
@@ -1116,7 +1119,7 @@ class DataManager:
                 if not config_batches:
                     break
                 else:
-                    yield list(self.gather_co_po_rows_pool(config_batches, pool, dataset_id, prop_map))
+                    yield list(self.gather_co_po_rows_pool(config_batches, pool, dataset_id, prop_map, strict))
 
     def gather_co_po_in_batches_no_pool(self, prop_map=None):
         """
@@ -1291,10 +1294,10 @@ class DataManager:
                     property_object_schema,
                 )
 
-    def load_data_to_pg_in_batches_no_spark(self, configs, dataset_id=None, config_table=None, prop_object_table=None, prop_map=None):
+    def load_data_to_pg_in_batches_no_spark(self, configs, dataset_id=None, config_table=None, prop_object_table=None, prop_map=None, strict=False):
         """Load data to PostgreSQL in batches."""
 
-        co_po_rows = self.gather_co_po_in_batches(configs, dataset_id, prop_map)
+        co_po_rows = self.gather_co_po_in_batches(configs, dataset_id, prop_map, strict)
         for co_po_batch in tqdm(
             co_po_rows,
             desc="Loading data to database: ",
@@ -1553,6 +1556,7 @@ class DataManager:
         config_table=None,
         prop_object_table=None,
         prop_map=None,
+        strict=False,
         ):
 
         if dataset_id is None:
@@ -1568,7 +1572,7 @@ class DataManager:
             else:
                 raise Exception("Configs must be an instance of either ase.Atoms or AtomicConfiguration")
 
-        self.load_data_to_pg_in_batches_no_spark(converted_configs, dataset_id, config_table, prop_object_table, prop_map)
+        self.load_data_to_pg_in_batches_no_spark(converted_configs, dataset_id, config_table, prop_object_table, prop_map, strict)
         self.create_dataset_pg_no_spark(
             name,
             dataset_id,
@@ -1705,7 +1709,7 @@ class DataManager:
                 curs.execute(sql)
 
 
-    def update_dataset_pg_no_spark(self, configs, dataset_id, prop_map):
+    def update_dataset_pg_no_spark(self, configs, dataset_id, prop_map, strict=False):
         # convert to CF AtomicConfiguration if not already
         converted_configs = []
         for c in configs:
@@ -1723,7 +1727,7 @@ class DataManager:
         new_v_no = int(largest_version) + 1
         new_dataset_id = dataset_id.split('_')[0] + '_' + dataset_id.split('_')[1] + '_' + str(new_v_no)
         
-        self.load_data_to_pg_in_batches_no_spark(converted_configs, new_dataset_id, prop_map=prop_map)
+        self.load_data_to_pg_in_batches_no_spark(converted_configs, new_dataset_id, prop_map=prop_map, strict=strict)
 
         #config_df_1 = self.dataset_query_pg(dataset_id, 'configurations')
         #prop_df_1 = self.dataset_query_pg(dataset_id, 'property_objects')
