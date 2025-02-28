@@ -52,14 +52,6 @@ def _hash(row, identifying_key_list, include_keys_in_hash=False):
     for k, v in zip(identifying_key_list, identifiers):
         if v is None or v == "[]":
             continue
-        # elif k in sort_for_hash:
-        #     v = np.array(v)
-        #     sorted_v = v[np.lexsort((
-        #         v[:, 2],
-        #         v[:, 1],
-        #         v[:, 0],
-        #     ))]
-        #     _hash.update(bytes(_format_for_hash(sorted_v)))
         else:
             if include_keys_in_hash:
                 _hash.update(bytes(_format_for_hash(k)))
@@ -278,12 +270,7 @@ def convert_stress(keys, stress):
 # Functions for splitting oversize arrays to columns
 ##########################################################
 def get_max_string_length(df, column_name):
-
-    max_len = (
-        df.select(sf.length(column_name).alias("string_length"))
-        .agg(sf.max("string_length"))
-        .collect()[0][0]
-    )
+    max_len = df.select(sf.max(sf.length(column_name))).collect()[0][0]
     if max_len is None:
         return 0
     return max_len
@@ -297,45 +284,49 @@ def split_long_string_cols(df, column_name: str, max_string_length: int):
     :param max_string_length: Maximum length for each split string
     :return: DataFrame with the long string split across multiple columns
     """
-    overflow_columns = [
-        f"{'_'.join(column_name.split('_')[:-1])}_{i + 1:02}" for i in range(19)
-    ]
-    if not all([col in df.columns for col in overflow_columns]):
-        raise ValueError("Overflow columns not found in target DataFrame schema")
+    if column_name not in df.columns:
+        raise ValueError(f"Column {column_name} not found in target DataFrame schema")
     if get_max_string_length(df, column_name) <= max_string_length:
-        # for col in overflow_columns:
-        #     df = df.withColumn(col, sf.lit("[]").cast(StringType()))
-        df = df.select(
-            *[
-                (
-                    sf.lit("[]").cast(StringType()).alias(col)
-                    if col in overflow_columns
-                    else sf.col(col)
-                )
-                for col in df.columns
-            ]
-        )
         return df
-    print(f"Column split: {column_name}")
-    all_columns = [column_name] + overflow_columns
-    tmp_columns = [f"{col_name}_tmp" for col_name in all_columns]
-    df = df.withColumn("total_length", sf.length(sf.col(column_name)))
-    substring_exprs = [
-        sf.when(
-            sf.length(sf.col(column_name)) - (i * max_string_length) > 0,
-            sf.substring(
-                sf.col(column_name), (i * max_string_length + 1), max_string_length
-            ),
-        )
-        .otherwise(sf.lit("[]"))
-        .alias(col_name)
-        for i, col_name in enumerate(tmp_columns)
-    ]
-    df = df.select("*", *substring_exprs)
-    for tmp_col, col in zip(tmp_columns, all_columns):
-        df = df.drop(col).withColumnRenamed(f"{tmp_col}", col)
-    df = df.drop("total_length")
-    return df
+    raise NotImplementedError(
+        "Splitting long string columns is not yet implemented. Please contact ColabFit team to request implementation this function and addition of overflow rows."  # noqa: E501
+    )
+    # overflow_columns = [
+    #     f"{'_'.join(column_name.split('_')[:-1])}_{i + 1:02}" for i in range(19)
+    # ]
+    # if not all([col in df.columns for col in overflow_columns]):
+    #     raise ValueError("Overflow columns not found in target DataFrame schema")
+    # df = df.select(
+    #     *[
+    #         (
+    #             sf.lit("[]").cast(StringType()).alias(col)
+    #             if col in overflow_columns
+    #             else sf.col(col)
+    #         )
+    #         for col in df.columns
+    #     ]
+    # )
+    # return df
+    # print(f"Column split: {column_name}")
+    # all_columns = [column_name] + overflow_columns
+    # tmp_columns = [f"{col_name}_tmp" for col_name in all_columns]
+    # df = df.withColumn("total_length", sf.length(sf.col(column_name)))
+    # substring_exprs = [
+    #     sf.when(
+    #         sf.length(sf.col(column_name)) - (i * max_string_length) > 0,
+    #         sf.substring(
+    #             sf.col(column_name), (i * max_string_length + 1), max_string_length
+    #         ),
+    #     )
+    #     .otherwise(sf.lit("[]"))
+    #     .alias(col_name)
+    #     for i, col_name in enumerate(tmp_columns)
+    # ]
+    # df = df.select("*", *substring_exprs)
+    # for tmp_col, col in zip(tmp_columns, all_columns):
+    #     df = df.drop(col).withColumnRenamed(f"{tmp_col}", col)
+    # df = df.drop("total_length")
+    # return df
 
 
 ELEMENT_MAP = {
