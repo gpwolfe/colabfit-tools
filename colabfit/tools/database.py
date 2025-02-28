@@ -1392,7 +1392,8 @@ class DataManager:
         links VARCHAR (1000) [],
         publication_year VARCHAR (256),
         doi VARCHAR (256),
-        uploader  VARCHAR (256)
+        uploader  VARCHAR (256),
+        property_map jsonb
         )
         """
         with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password) as conn:
