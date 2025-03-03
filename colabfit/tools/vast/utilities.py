@@ -250,6 +250,8 @@ def str_to_arrayof_int(val):
 
 @sf.udf(returnType=ArrayType(ArrayType(DoubleType())))
 def str_to_nestedarrayof_double(val):
+    if val is None:
+        return None
     if isinstance(val, str) and len(val) > 0 and val[0] == "[":
         return literal_eval(val)
     raise ValueError(f"Error converting {val} to list")
