@@ -116,6 +116,8 @@ def config_struct_hash_udf(atomic_numbers, cell, pbc, *positions):
 
 def get_spark_field_type(schema, field_name):
     for field in schema:
+        if field.name == "$row_id":
+            return LongType()
         if field.name == field_name:
             return field.dataType
     raise ValueError(f"Field name {field_name} not found in schema")
@@ -225,6 +227,11 @@ def _parse_unstructured_metadata(md_json):
     }
 
 
+############################################################
+# Functions for converting column values to and from string
+############################################################
+
+
 @sf.udf(returnType=ArrayType(StringType()))
 def str_to_arrayof_str(val):
     try:
@@ -236,6 +243,15 @@ def str_to_arrayof_str(val):
 
 @sf.udf(returnType=ArrayType(IntegerType()))
 def str_to_arrayof_int(val):
+    if isinstance(val, str) and len(val) > 0 and val[0] == "[":
+        return literal_eval(val)
+    raise ValueError(f"Error converting {val} to list")
+
+
+@sf.udf(returnType=ArrayType(ArrayType(DoubleType())))
+def str_to_nestedarrayof_double(val):
+    if val is None:
+        return None
     if isinstance(val, str) and len(val) > 0 and val[0] == "[":
         return literal_eval(val)
     raise ValueError(f"Error converting {val} to list")
@@ -266,9 +282,9 @@ def convert_stress(keys, stress):
     ]
 
 
-##########################################################
-# Functions for splitting oversize arrays to columns
-##########################################################
+#####################################################################
+# Functions for splitting and combining oversize array column values
+#####################################################################
 def get_max_string_length(df, column_name):
     max_len = df.select(sf.max(sf.length(column_name))).collect()[0][0]
     if max_len is None:
@@ -327,6 +343,34 @@ def split_long_string_cols(df, column_name: str, max_string_length: int):
     #     df = df.drop(col).withColumnRenamed(f"{tmp_col}", col)
     # df = df.drop("total_length")
     # return df
+
+
+def combine_cols(df, col_name_base: str):
+    """
+    Combines multiple columns into a single column (atomic forces, positions)
+    :param df: Input DataFrame with array cols already stringified
+    :param col_name_base: Name of the column to combine with no integer suffix
+    :return: DataFrame with the specified column combined
+    """
+    columns = [f"{col_name_base}_{i:02}" for i in range(20)]
+    if not all([col in df.columns for col in columns]):
+        raise ValueError("Overflow columns not found in target DataFrame schema")
+    print(f"Column combined: {col_name_base}")
+    df = df.withColumn(
+        col_name_base,
+        sf.concat_ws("", *[sf.col(col) for col in columns]),
+    )
+    df = df.select(
+        *[
+            (
+                sf.lit("[]").cast(StringType()).alias(col)
+                if col in columns
+                else sf.col(col)
+            )
+            for col in df.columns
+        ]
+    )
+    return df
 
 
 ELEMENT_MAP = {

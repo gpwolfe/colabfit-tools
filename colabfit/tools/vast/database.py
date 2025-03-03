@@ -1370,7 +1370,10 @@ def read_md_partition(partition, config):
     def process_row(row):
         rowdict = row.asDict()
         try:
-            rowdict["metadata"] = s3_mgr.read_file(row["metadata_path"])
+            if row["metadata_path"] is None:
+                rowdict["metadata"] = None
+            else:
+                rowdict["metadata"] = s3_mgr.read_file(row["metadata_path"])
         except ClientError as e:
             if e.response["Error"]["Code"] == "404":
                 rowdict["metadata"] = None
