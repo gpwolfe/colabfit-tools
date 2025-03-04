@@ -24,7 +24,6 @@ from colabfit.tools.pg.configuration_set import ConfigurationSet
 from colabfit.tools.pg.dataset import Dataset
 from colabfit.tools.pg.property import Property
 from colabfit.tools.pg.schema import (
-    co_cs_mapping_schema,
     config_md_schema,
     config_schema,
     configuration_set_schema,
@@ -34,21 +33,10 @@ from colabfit.tools.pg.schema import (
     property_object_schema,
 )
 from colabfit.tools.pg.utilities import get_last_modified
-from colabfit.tools.property_definitions import (  # quests_descriptor_pd,; mask_selection_pd,
-    atomic_forces_pd,
-    cauchy_stress_pd,
-    energy_pd,
-)
 
 VAST_BUCKET_DIR = "colabfit-data"
 VAST_METADATA_DIR = "data/MD"
 NSITES_COL_SPLITS = 20
-_CONFIGS_COLLECTION = "test_configs"
-_CONFIGSETS_COLLECTION = "test_config_sets"
-_DATASETS_COLLECTION = "test_datasets"
-_PROPOBJECT_COLLECTION = "test_prop_objects"
-_CO_CS_MAP_COLLECTION = "test_co_cs_map"
-_MAX_STRING_LEN = 60000
 
 
 def generate_string():
@@ -380,21 +368,11 @@ class DataManager:
              SELECT definition
              FROM property_definitions;
         """
-        with psycopg.connect(
-            dbname=self.dbname,
-            user=self.user,
-            port=self.port,
-            host=self.host,
-            password=self.password,
-            row_factory=dict_row,
-        ) as conn:
-            with conn.cursor() as curs:
-                curs.execute(sql)
-                defs = curs.fetchall()
-                dict_defs = []
-                for d in defs:
-                    dict_defs.append(json.loads(d["definition"]))
-                return dict_defs
+        defs = self.general_query(sql)
+        dict_defs = []
+        for d in defs:
+            dict_defs.append(json.loads(d["definition"]))
+        return dict_defs
 
     def insert_data_and_create_dataset(
         self,
@@ -543,15 +521,7 @@ class DataManager:
             ALTER TABLE {table}
             ADD COLUMN {column_name} {data_type};
         """
-        with psycopg.connect(
-            dbname=self.dbname,
-            user=self.user,
-            port=self.port,
-            host=self.host,
-            password=self.password,
-        ) as conn:
-            with conn.cursor() as curs:
-                curs.execute(sql)
+        self.execute_sql(sql)
 
     def update_dataset(self, configs, dataset_id, prop_map):
         # convert to CF AtomicConfiguration if not already
@@ -655,18 +625,7 @@ class DataManager:
         ON
             c.id = po.configuration_id;
         """
-        with psycopg.connect(
-            dbname=self.dbname,
-            user=self.user,
-            port=self.port,
-            host=self.host,
-            password=self.password,
-            row_factory=dict_row,
-        ) as conn:
-            with conn.cursor() as curs:
-                curs.execute(sql)
-                table = curs.fetchall()
-                return table
+        return self.general_query(sql)
 
     def general_query(self, sql):
         with psycopg.connect(
@@ -694,7 +653,6 @@ class DataManager:
         ) as conn:
             with conn.cursor() as curs:
                 curs.execute(sql)
-            conn.commit()
 
     def dataset_query(
         self,
@@ -718,17 +676,7 @@ class DataManager:
                 "Only configurations and property_objects tables are supported"
             )
 
-        with psycopg.connect(
-            dbname=self.dbname,
-            user=self.user,
-            port=self.port,
-            host=self.host,
-            password=self.password,
-            row_factory=dict_row,
-        ) as conn:
-            with conn.cursor() as curs:
-                r = curs.execute(sql)
-                return curs.fetchall()
+        return self.general_query(sql)
 
     def get_dataset(self, dataset_id):
         sql = f"""
@@ -737,17 +685,7 @@ class DataManager:
                 WHERE id = '{dataset_id}';
             """
         print(dataset_id)
-        with psycopg.connect(
-            dbname=self.dbname,
-            user=self.user,
-            port=self.port,
-            host=self.host,
-            password=self.password,
-            row_factory=dict_row,
-        ) as conn:
-            with conn.cursor() as curs:
-                r = curs.execute(sql)
-                return curs.fetchall()
+        return self.general_query(sql)
 
     def create_configuration_sets(
         self,
