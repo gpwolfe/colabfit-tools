@@ -64,31 +64,36 @@ class ConfigurationSet:
         row_dict = _empty_dict_from_schema(configuration_set_schema)
         row_dict["name"] = self.name
         row_dict["description"] = self.description
-        row_dict["nconfigurations"] = config_df.select("id").distinct().count()
+        row_dict["dataset_id"] = self.dataset_id
+        config_df = config_df.drop_duplicates(["id"])
+        config_df.cache()
+        agg_df = config_df.agg(
+            sf.count("id").alias("nconfigurations"),
+            sf.sum("nsites").alias("nsites"),
+            sf.collect_set("nperiodic_dimensions").alias("nperiodic_dimensions"),
+            sf.collect_set("dimension_types").alias("dimension_types"),
+            sf.flatten(sf.collect_set("elements")).alias("elements"),
+        )
+        agg_row = agg_df.collect()[0]
+        row_dict["nconfigurations"] = agg_row["nconfigurations"]
+        row_dict["nsites"] = agg_row["nsites"]
+        row_dict["nperiodic_dimensions"] = agg_row["nperiodic_dimensions"]
+        row_dict["dimension_types"] = agg_row["dimension_types"]
+        row_dict["elements"] = sorted(agg_row["elements"])
+        row_dict["nelements"] = len(row_dict["elements"])
         row_dict["last_modified"] = get_last_modified()
-        row_dict["nsites"] = config_df.agg({"nsites": "sum"}).first()[0]
-        row_dict["elements"] = sorted(
-            config_df.withColumn("exploded_elements", sf.explode("elements"))
-            .agg(sf.collect_set("exploded_elements").alias("exploded_elements"))
-            .select("exploded_elements")
-            .take(1)[0][0]
+        atomic_ratios_df = (
+            config_df.select("atomic_numbers")
+            .withColumn("single_element", sf.explode("atomic_numbers"))
+            .groupBy("single_element")
+            .agg(sf.count("single_element").alias("count"))
         )
-        row_dict["nperiodic_dimensions"] = config_df.agg(
-            sf.collect_set("nperiodic_dimensions")
-        ).collect()[0][0]
-        row_dict["dimension_types"] = config_df.agg(
-            sf.collect_set("dimension_types")
-        ).collect()[0][0]
-        atomic_ratios_df = config_df.select("atomic_numbers").withColumn(
-            "single_element", sf.explode("atomic_numbers")
-        )
-        total_elements = atomic_ratios_df.count()
-        print(total_elements, row_dict["nsites"])
-        assert total_elements == row_dict["nsites"]
-        atomic_ratios_df = atomic_ratios_df.groupBy("single_element").count()
+        total_elements = atomic_ratios_df.agg(sf.sum("count")).collect()[0][0]
         atomic_ratios_df = atomic_ratios_df.withColumn(
             "ratio", sf.col("count") / total_elements
         )
+        print(total_elements, row_dict["nsites"])
+        assert total_elements == row_dict["nsites"]
         element_map_expr = sf.create_map(
             [
                 sf.lit(k)
@@ -106,10 +111,7 @@ class ConfigurationSet:
         row_dict["total_elements_ratios"] = [
             x[1] for x in sorted(atomic_ratios_coll, key=lambda x: x["element"])
         ]
-        row_dict["nelements"] = len(row_dict["elements"])
-        row_dict["nsites"] = config_df.agg({"nsites": "sum"}).first()[0]
-        row_dict["dataset_id"] = self.dataset_id
-
+        config_df.unpersist()
         return row_dict
 
     def __hash__(self):

@@ -441,7 +441,6 @@ class VastDataLoader:
         }
         str_col_types.update(addtl_fields)
         unstr_col_types.update(addtl_fields)
-
         read_schema = StructType(
             [StructField(col, col_type, True) for col, col_type in str_col_types.items()]
         )
@@ -479,7 +478,7 @@ class VastDataLoader:
                     if df.filter(sf.col("labels").isNotNull()).count() == 0:
                         continue
                     duplicate_df = self.concat_column_vals(df, duplicate_df, col)
-                elif col in ["names", "configuration_set_ids"]:
+                elif col == "names":
                     duplicate_df = self.concat_column_vals(df, duplicate_df, col)
                 elif col == "multiplicity":
                     duplicate_df = self.increment_multiplicity(df, duplicate_df)
@@ -718,15 +717,21 @@ class VastDataLoader:
             "dimension_types",
             "atomic_numbers",
         ]
+        read_schema = StructType(
+            [field for field in config_schema.fields if field.name in config_df_cols]
+        )
         spark_df = None
-        co_ids = (
-            self.spark.table(self.prop_object_table)
-            .filter(sf.col("dataset_id") == dataset_id)
-            .select("configuration_id")
-        )
-        co_id_batches = batched(
-            sorted([x["configuration_id"] for x in co_ids.collect()]), 10000
-        )
+        if configuration_ids is not None:
+            co_id_batches = configuration_ids
+        else:
+            co_ids = (
+                self.spark.table(self.prop_object_table)
+                .filter(sf.col("dataset_id") == dataset_id)
+                .select("configuration_id")
+                .collect()
+            )
+            co_ids = [x["configuration_id"] for x in co_ids]
+        co_id_batches = batched(sorted(co_ids), 10000)
         for co_id_batch in co_id_batches:
             if name_match is None and label_match is None:
                 predicate = _.id.isin(co_id_batch)
@@ -742,14 +747,14 @@ class VastDataLoader:
                 predicate = (_.id.isin(co_id_batch)) & (_.labels.contains(label_match))
             if spark_df is None:
                 spark_df = self.simple_sdk_query(
-                    self.config_table, predicate, config_schema, columns=config_df_cols
+                    self.config_table, predicate, read_schema, columns=config_df_cols
                 )
             else:
                 spark_df = spark_df.union(
                     self.simple_sdk_query(
                         self.config_table,
                         predicate,
-                        config_schema,
+                        read_schema,
                         columns=config_df_cols,
                     )
                 )
@@ -1100,7 +1105,6 @@ class DataManager:
         """
         dataset_id = self.dataset_id
         config_set_rows = []
-        co_row_update_df = None
         co_cs_write_df = None
         for i, (names_match, label_match, cs_name, cs_desc) in tqdm(
             enumerate(name_label_match), desc="Creating Configuration Sets"
@@ -1164,40 +1168,12 @@ class DataManager:
                 co_cs_write_df = co_cs_df
             else:
                 co_cs_write_df = co_cs_write_df.union(co_cs_df)
-            # loader.write_table(co_cs_df, loader.co_cs_map_table, check_unique=False)
-            config_set_query_df = config_set_query_df.withColumn(
-                "configuration_set_ids", sf.array(sf.lit(config_set.id))
-            )
-            if co_row_update_df is None:
-                co_row_update_df = config_set_query_df
-            elif co_row_update_df.count() > 10000:
-                loader.update_existing_co_po_rows(
-                    df=co_row_update_df,
-                    table_name=loader.config_table,
-                    cols=["configuration_set_ids"],
-                    elems=[None],
-                    str_schema=config_schema,
-                    arr_schema=config_arr_schema,
-                )
-                co_row_update_df = config_set_query_df
-            else:
-                co_row_update_df = co_row_update_df.union(config_set_query_df)
-
-            t_end = time() - t
-            print(f"Time to create CS and update COs with CS-ID: {t_end}")
             config_set_rows.append(config_set.row_dict)
+            t_end = time() - t
+            print(f"Time to create CS: {t_end}")
         if co_cs_write_df.count() > 0 and co_cs_write_df is not None:
             loader.write_table(
                 co_cs_write_df, loader.co_cs_map_table, check_unique=False
-            )
-        if co_row_update_df.count() > 0 and co_row_update_df is not None:
-            loader.update_existing_co_po_rows(
-                df=co_row_update_df,
-                table_name=loader.config_table,
-                cols=["configuration_set_ids"],
-                elems=[None],
-                str_schema=config_schema,
-                arr_schema=config_arr_schema,
             )
         config_set_df = loader.spark.createDataFrame(
             config_set_rows, schema=configuration_set_arr_schema

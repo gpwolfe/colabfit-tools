@@ -27,7 +27,6 @@ config_arr_schema = StructType(
         StructField("hash", StringType(), True),
         StructField("last_modified", TimestampType(), True),
         StructField("dataset_ids", ArrayType(StringType()), True),
-        StructField("configuration_set_ids", ArrayType(StringType()), True),
         StructField("chemical_formula_hill", StringType(), True),
         StructField("chemical_formula_reduced", StringType(), True),
         StructField("chemical_formula_anonymous", StringType(), True),
