@@ -197,54 +197,78 @@ class DataManager:
                 )
 
     @staticmethod
-    def co_row_dict_to_sql(row_dict):
-        """Convert a row dictionary to a SQL row insert statement."""
-        assert set(row_dict.keys()) == set([x.name for x in config_schema.columns])
-        columns = list(row_dict.keys())
-        name = row_dict["names"][0]
-        dataset_id = row_dict["dataset_ids"][0]
+    def get_co_sql():
+        columns = [x.name for x in config_md_schema.columns]
         sql_compose = sql.SQL(" ").join(
             [
                 sql.SQL("INSERT INTO"),
-                sql.Identifier(config_schema.name),
+                sql.Identifier(config_md_schema.name),
                 sql.SQL("("),
                 sql.SQL(",").join(map(sql.Identifier, columns)),
                 sql.SQL(") VALUES ("),
-                sql.SQL(",").join(
-                    [
-                        sql.Literal(val) if val is not None else sql.SQL("NULL")
-                        for val in row_dict.values()
-                    ]
-                ),
+                sql.SQL(",").join(sql.Placeholder() * len(columns)),
                 sql.SQL(")"),
                 sql.SQL("ON CONFLICT (hash) DO UPDATE SET"),
                 sql.Identifier("dataset_ids"),
                 sql.SQL("= array_append("),
                 sql.Identifier("configurations.dataset_ids"),
-                sql.SQL(", "),
-                sql.Literal(dataset_id),
-                sql.SQL(") , "),
+                sql.SQL(","),
+                sql.Placeholder(),
+                sql.SQL(") ,"),
                 sql.Identifier("names"),
                 sql.SQL("= array_append("),
                 sql.Identifier("configurations.names"),
-                sql.SQL(", "),
-                sql.Literal(name),
+                sql.SQL(","),
+                sql.Placeholder(),
                 sql.SQL(");"),
             ]
         )
         return sql_compose
 
+    @staticmethod
+    def get_po_sql():
+        columns = [x.name for x in property_object_md_schema.columns]
+        sql_compose = sql.SQL(" ").join(
+            [
+                sql.SQL("INSERT INTO"),
+                sql.Identifier(property_object_md_schema.name),
+                sql.SQL("("),
+                sql.SQL(",").join(map(sql.Identifier, columns)),
+                sql.SQL(") VALUES ("),
+                sql.SQL(",").join(sql.Placeholder() * len(columns)),
+                sql.SQL(")"),
+                sql.SQL(
+                    "ON CONFLICT (hash) DO UPDATE SET multiplicity = {}.multiplicity + 1;"
+                ).format(sql.Identifier(property_object_md_schema.name)),
+            ]
+        )
+        return sql_compose
+
+    @staticmethod
+    def co_row_to_values(row_dict):
+        name = row_dict["names"][0]
+        dataset_id = row_dict["dataset_ids"][0]
+        vals = [row_dict.get(k) for k in config_md_schema.columns]
+        vals.append(dataset_id)
+        vals.append(name)
+        return vals
+
+    @staticmethod
+    def po_row_to_values(row_dict):
+        vals = [row_dict.get(k) for k in property_object_md_schema.columns]
+        return vals
+
     def load_data_in_batches(
         self,
         configs,
         dataset_id=None,
-        config_table=None,
-        prop_object_table=None,
         prop_map=None,
     ):
         """Load data to PostgreSQL in batches."""
 
         co_po_rows = self.gather_co_po_in_batches(configs, dataset_id, prop_map)
+        co_sql = self.get_co_sql()
+        po_sql = self.get_po_sql()
         for co_po_batch in tqdm(
             co_po_rows,
             desc="Loading data to database: ",
@@ -254,35 +278,12 @@ class DataManager:
 
             if len(co_rows) == 0:
                 continue
-            co_values = map(self.co_row_dict_to_sql, co_rows)
-
             # TODO: Need to modify dataset.to_row_dict to properly aggregate values and get data to get two copies
-
             # TODO: Ensure all columns are present here
             # TODO: get column names from query and ensure len matches values
-            columns = list(zip(*self.get_table_schema("property_objects")))[0]
-            column_string = ", ".join(list(columns))
-            val_string = ", ".join(["%s"] * len(columns))
-            po_values = []
-            for po_row in po_rows:
-                t = []
-                for column in columns:
-                    # print (column)
-                    try:
-                        val = po_row[column]
-                    except Exception:
-                        val = None
-                    t.append(val)
-                po_values.append(t)
-            # TODO: get column names from query and ensure len matches values
-            sql_po = f"""
-                INSERT INTO property_objects ({column_string})
-                VALUES ({val_string})
-                ON CONFLICT (hash)
-                DO UPDATE SET multiplicity = property_objects.multiplicity + 1;
-
-            """
-
+            # columns = list(zip(*self.get_table_schema("property_objects")))[0]
+            co_values = map(self.co_row_to_values, co_rows)
+            po_values = map(self.po_row_to_values, po_rows)
             with psycopg.connect(
                 dbname=self.dbname,
                 user=self.user,
@@ -291,8 +292,8 @@ class DataManager:
                 password=self.password,
             ) as conn:
                 with conn.cursor() as curs:
-                    curs.executemany(sql_co, co_values)
-                    curs.executemany(sql_po, po_values)
+                    curs.executemany(co_sql, co_values)
+                    curs.executemany(po_sql, po_values)
 
     def create_table(self, schema):
         name_type = [
@@ -417,7 +418,6 @@ class DataManager:
         if dataset_id is None:
             dataset_id = generate_ds_id()
 
-        # convert to CF AtomicConfiguration if not already
         converted_configs = []
         for c in configs:
             if isinstance(c, Atoms):
