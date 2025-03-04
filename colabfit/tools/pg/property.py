@@ -5,7 +5,7 @@ import tempfile
 import warnings
 from collections import namedtuple
 from copy import deepcopy
-
+from functools import partial
 import kim_edn
 import numpy as np
 from ase.units import create_units
@@ -49,6 +49,7 @@ MAIN_KEY_MAP = {
     "band-gap": energy_info,
 }
 
+
 # These are fields that are related to the geometry of the atomic structure
 # or the OpenKIM Property Definition and shouldn't be used for equality checks
 _ignored_fields = [
@@ -86,7 +87,7 @@ def atomic_forces_to_schema(af_prop: dict):
     if af_prop.get("forces") is None:
         return {}
     af_dict = {
-        "atomic_forces_00": af_prop["forces"]["source-value"],
+        "atomic_forces": af_prop["forces"]["source-value"],
         "atomic_forces_unit": af_prop["forces"]["source-unit"],
     }
     return af_dict
@@ -117,7 +118,10 @@ def band_gap_to_schema(bg_prop: dict):
 
 
 prop_to_row_mapper = {
-    "energy": energy_to_schema,
+    "energy": partial(energy_to_schema, "energy"),
+    "adsorption-energy": partial(energy_to_schema, "adsorption-energy"),
+    "atomization-energy": partial(energy_to_schema, "atomization-energy"),
+    "formation-energy": partial(energy_to_schema, "formation-energy"),
     "atomic-forces": atomic_forces_to_schema,
     "cauchy-stress": cauchy_stress_to_schema,
     "band-gap": band_gap_to_schema,
@@ -254,7 +258,7 @@ class Property(dict):
         # TODO: Dynamically get unique_identifiers
         self.unique_identifier_kw = []
         for k, v in self.row_dict.items():
-            if k not in ["last_modified"]:
+            if k not in ["last_modified", "multiplicity"]:
                 self.unique_identifier_kw.append(k)
         self._hash = _hash(self.row_dict, self.unique_identifier_kw, False)
         self.row_dict["hash"] = str(self._hash)
@@ -473,7 +477,6 @@ class Property(dict):
         # TODO: contruct empty dict from schema or just use instance instead
         row_dict = _empty_dict_from_schema(property_object_md_schema)
         row_dict["metadata"] = self.metadata
-        print(self.instance)
         for key, val in self.instance.items():
             if key == "method":
                 row_dict["method"] = val
@@ -483,10 +486,8 @@ class Property(dict):
                 continue
             elif key == "configuration_id":
                 row_dict["configuration_id"] = val
-            # elif "energy" in key:
-            #     row_dict.update(prop_to_row_mapper["energy"](key, val))
-            # else:
-            #     row_dict.update(prop_to_row_mapper[key](val))
+            elif key in prop_to_row_mapper:
+                row_dict.update(prop_to_row_mapper[key](val))
             else:
                 for k2, v2 in val.items():
                     if k2 in ["property-id", "instance-id"]:

@@ -229,7 +229,7 @@ class AtomicConfiguration(Atoms):
         co_dict["names"] = self.names
         co_dict["labels"] = self.labels
         cell_lengths = np.linalg.norm(self.cell.array.astype(float), axis=1)
-        pbc = cell_lengths > 1e-6
+        pbc = cell_lengths > 1e-10
         co_dict["pbc"] = pbc.astype(bool).tolist()
         co_dict["last_modified"] = get_last_modified()
         co_dict["atomic_numbers"] = self.numbers.astype(int).tolist()
