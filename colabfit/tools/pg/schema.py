@@ -10,6 +10,7 @@ class Schema:
     def __init__(self, name: str, columns: list[tuple]):
         self.name = name
         self.columns = columns
+        self.column_names = [column.name for column in columns]
 
     def add(self, column: tuple):
         return Schema(self.name, self.columns + [column])
@@ -68,7 +69,6 @@ property_object_schema = Schema(
         column("configuration_id", "VARCHAR (256)", True),
         column("dataset_id", "VARCHAR (256)", True),
         column("multiplicity", "INT", True),
-        column("metadata_id", "VARCHAR (256)", True),
         column("software", "VARCHAR (256)", True),
         column("method", "VARCHAR (256)", True),
         column("chemical_formula_hill", "VARCHAR (256)", True),
@@ -82,7 +82,6 @@ property_object_schema = Schema(
         column("adsorption_energy", "DOUBLE PRECISION", True),
         column("atomization_energy", "DOUBLE PRECISION", True),
     ],
-    # TODO: Add schema associated with new properties: selection/descriptor
 )
 
 property_object_md_schema = property_object_schema.add(
