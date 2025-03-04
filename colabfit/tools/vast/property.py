@@ -75,6 +75,8 @@ _hash_ignored_fields = [
     "multiplicity",
     "metadata_path",
     "metadata_size",
+    "mean_force_norm",
+    "max_force_norm",
 ]
 
 
@@ -252,28 +254,28 @@ class Property(dict):
                 If True, converts units to those expected by ColabFit. Default
                 is True
         """
-        # self.unique_identifier_kw = [
-        #     k
-        #     for k in property_object_schema.fieldNames()
-        #     if k not in _hash_ignored_fields
-        # ]
         self.unique_identifier_kw = [
-            "adsorption_energy",
-            "atomic_forces_00",
-            "atomization_energy",
-            "cauchy_stress",
-            "cauchy_stress_volume_normalized",
-            "chemical_formula_hill",
-            "configuration_id",
-            "dataset_id",
-            "electronic_band_gap",
-            "electronic_band_gap_type",
-            "energy",
-            "formation_energy",
-            "metadata_id",
-            "method",
-            "software",
+            k
+            for k in property_object_schema.fieldNames()
+            if k not in _hash_ignored_fields
         ]
+        # self.unique_identifier_kw = [
+        #     "adsorption_energy",
+        #     "atomic_forces_00",
+        #     "atomization_energy",
+        #     "cauchy_stress",
+        #     "cauchy_stress_volume_normalized",
+        #     "chemical_formula_hill",
+        #     "configuration_id",
+        #     "dataset_id",
+        #     "electronic_band_gap",
+        #     "electronic_band_gap_type",
+        #     "energy",
+        #     "formation_energy",
+        #     "metadata_id",
+        #     "method",
+        #     "software",
+        # ]
         self.unique_identifier_kw.extend(
             [f"atomic_forces_{i:02d}" for i in range(1, 20)]
         )
