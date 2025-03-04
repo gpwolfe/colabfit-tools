@@ -1,7 +1,5 @@
-import datetime
 import warnings
 
-import dateutil
 import pyspark.sql.functions as sf
 from unidecode import unidecode
 
@@ -11,6 +9,7 @@ from colabfit.tools.vast.utilities import (
     ELEMENT_MAP,
     _empty_dict_from_schema,
     _hash,
+    get_last_modified,
     str_to_arrayof_int,
     str_to_arrayof_str,
 )
@@ -134,11 +133,7 @@ class Dataset:
         """"""
 
         row_dict = _empty_dict_from_schema(dataset_schema)
-        row_dict["last_modified"] = dateutil.parser.parse(
-            datetime.datetime.now(tz=datetime.timezone.utc).strftime(
-                "%Y-%m-%dT%H:%M:%SZ"
-            )
-        )
+        row_dict["last_modified"] = get_last_modified()
         row_dict["nconfiguration_sets"] = len(self.configuration_set_ids)
         config_df = config_df.select(
             "id",

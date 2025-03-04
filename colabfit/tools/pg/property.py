@@ -1,4 +1,3 @@
-import datetime
 import itertools
 import json
 import os
@@ -7,7 +6,6 @@ import warnings
 from collections import namedtuple
 from copy import deepcopy
 
-import dateutil.parser
 import kim_edn
 import numpy as np
 from ase.units import create_units
@@ -19,7 +17,8 @@ from kim_property.create import KIM_PROPERTIES
 from kim_property.definition import PROPERTY_ID as VALID_KIM_ID
 
 from colabfit.tools.pg.configuration import AtomicConfiguration
-from colabfit.tools.pg.utilities import _hash
+from colabfit.tools.pg.schema import property_object_md_schema
+from colabfit.tools.pg.utilities import _empty_dict_from_schema, _hash, get_last_modified
 
 EDN_KEY_MAP = {
     "energy": "unrelaxed-potential-energy",
@@ -128,7 +127,7 @@ prop_to_row_mapper = {
 def md_from_map(pmap_md, config: AtomicConfiguration) -> tuple:
     """
     Extract metadata from a property map.
-    Returns metadata dict as a JSON string..
+    Returns metadata dict as a JSON string, method, and software.
     """
     gathered_fields = {}
     for md_field in pmap_md.keys():
@@ -136,12 +135,6 @@ def md_from_map(pmap_md, config: AtomicConfiguration) -> tuple:
             v = pmap_md[md_field]["value"]
         elif "field" in pmap_md[md_field]:
             field_key = pmap_md[md_field]["field"]
-            if md_field == "metadata" or "_metadata":
-                if field_key in config.info:
-                    assert isinstance(config.info[field_key], dict)
-                    for k2, v2 in config.info[field_key].items():
-                        gathered_fields[k2] = v2
-                continue
             if field_key in config.info:
                 v = config.info[field_key]
             elif field_key in config.arrays:
@@ -157,8 +150,18 @@ def md_from_map(pmap_md, config: AtomicConfiguration) -> tuple:
                 "source-unit": pmap_md[md_field]["units"],
             }
         else:
-            gathered_fields[md_field] = v
-    return json.dumps(gathered_fields)
+            gathered_fields[md_field] = {"source-value": v}
+    method = gathered_fields.pop("method", None)
+    software = gathered_fields.pop("software", None)
+    if "property_keys" not in gathered_fields:
+        raise RuntimeError(
+            "'property_keys' must be provided in the property map. If defined, check that property_keys is formatted as {'property_keys': {'value': {'key1 : value1}}}"  # noqa E501
+        )
+    if method is not None:
+        method = method["source-value"]
+    if software is not None:
+        software = software["source-value"]
+    return gathered_fields, method, software
 
 
 class PropertyParsingError(Exception):
@@ -279,6 +282,34 @@ class Property(dict):
         return self._property_fields
 
     @classmethod
+    def get_property_value(cls, val, info, arrays):
+        if "value" in val:
+            data = val["value"]
+        elif val["field"] in info:
+            data = info[val["field"]]
+        elif val["field"] in arrays:
+            data = arrays[val["field"]]
+        else:
+            # TODO: Populate non existing ones with None
+            # Key not found on configurations. Will be checked later
+            # data = None
+            return False
+        if isinstance(data, (np.ndarray, list)):
+            data = np.atleast_1d(data).tolist()
+        elif isinstance(data, np.integer):
+            data = int(data)
+        elif isinstance(data, np.floating):
+            data = float(data)
+        elif isinstance(data, (str, bool, int, float)):
+            pass
+        value = {
+            "source-value": data,
+        }
+        if val["units"] not in ["None", None]:
+            value["source-unit"] = val["units"]
+        return value
+
+    @classmethod
     def get_kim_instance(
         cls,
         definition,
@@ -395,56 +426,34 @@ class Property(dict):
         }
         props_dict = {}
         pi_md = None
-        for pname, pmap_list in property_map.items():
+        for pname, pmap in property_map.items():
             instance = instances.get(pname, None)
             if pname == "_metadata":
-                pi_md = md_from_map(pmap_list, configuration)
+                pi_md, method, software = md_from_map(pmap, configuration)
+                props_dict["method"] = method
+                props_dict["software"] = software
+                continue
             elif instance is None:
                 raise PropertyParsingError(f"Property {pname} not found in definitions")
             else:
                 instance = instance.copy()
-                not_present = 0
-                for pmap_i, pmap in enumerate(pmap_list):
-                    for key, val in pmap.items():
-                        if "value" in val:
-                            # Default value provided
-                            data = val["value"]
-                        elif val["field"] in configuration.info:
-                            data = configuration.info[val["field"]]
-                        elif val["field"] in configuration.arrays:
-                            data = configuration.arrays[val["field"]]
-                        else:
-                            # TODO: Populate non existing ones with None
-                            # Key not found on configurations. Will be checked later
-                            # data = None
-                            not_present = 1
-                            continue
-
-                        if isinstance(data, (np.ndarray, list)):
-                            data = np.atleast_1d(data).tolist()
-                        elif isinstance(data, np.integer):
-                            data = int(data)
-                        elif isinstance(data, np.floating):
-                            data = float(data)
-                        elif isinstance(data, (str, bool, int, float)):
-                            pass
-                        instance[key] = {
-                            "source-value": data,
-                        }
-
-                        if (val["units"] != "None") and (val["units"] is not None):
-                            instance[key]["source-unit"] = val["units"]
+                for key, val in pmap.items():
+                    pval = cls.get_property_value(
+                        val, configuration.info, configuration.arrays
+                    )
+                    if pval is False:
+                        pdef_dict.pop(pname)
+                        break
+                    else:
+                        instance[key] = pval
                 # TODO: Check below
-                if not_present:
-                    pdef_dict.pop(pname)
-                    continue
                 # hack to get around OpenKIM requiring the property-name be a dict
                 prop_name_tmp = pdef_dict[pname].pop("property-name")
                 check_instance_optional_key_marked_required_are_present(
                     instance, pdef_dict[pname]
                 )
                 pdef_dict[pname]["property-name"] = prop_name_tmp
-                props_dict[pname] = {k: v for k, v in instance.items()}
+                props_dict[pname] = instance
         props_dict["chemical_formula_hill"] = configuration.get_chemical_formula()
         props_dict["configuration_id"] = configuration.id
         return cls(
@@ -459,11 +468,12 @@ class Property(dict):
 
     def to_row_dict(self):
         """
-        Convert the Property to a Spark Row object
+        Convert the Property to a dictionary
         """
         # TODO: contruct empty dict from schema or just use instance instead
-        row_dict = {}
+        row_dict = _empty_dict_from_schema(property_object_md_schema)
         row_dict["metadata"] = self.metadata
+        print(self.instance)
         for key, val in self.instance.items():
             if key == "method":
                 row_dict["method"] = val
@@ -473,31 +483,17 @@ class Property(dict):
                 continue
             elif key == "configuration_id":
                 row_dict["configuration_id"] = val
+            # elif "energy" in key:
+            #     row_dict.update(prop_to_row_mapper["energy"](key, val))
+            # else:
+            #     row_dict.update(prop_to_row_mapper[key](val))
             else:
                 for k2, v2 in val.items():
                     if k2 in ["property-id", "instance-id"]:
                         continue
                     else:
                         row_dict[f"{key}_{k2}".replace("-", "_")] = v2["source-value"]
-            """
-            if key == "method":
-                row_dict["method"] = val
-            elif key == "software":
-                row_dict["software"] = val
-            elif key == "_metadata":
-                continue
-            elif key == "configuration_id":
-                row_dict["configuration_id"] = val
-            elif "energy" in key:
-                row_dict.update(prop_to_row_mapper["energy"](key, val))
-            else:
-                row_dict.update(prop_to_row_mapper[key](val))
-            """
-        row_dict["last_modified"] = dateutil.parser.parse(
-            datetime.datetime.now(tz=datetime.timezone.utc).strftime(
-                "%Y-%m-%dT%H:%M:%SZ"
-            )
-        )
+        row_dict["last_modified"] = get_last_modified()
         row_dict["chemical_formula_hill"] = self.chemical_formula_hill
         row_dict["multiplicity"] = 1
         row_dict["dataset_id"] = self.dataset_id

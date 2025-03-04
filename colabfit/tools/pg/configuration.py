@@ -1,7 +1,5 @@
-import datetime
 from string import ascii_lowercase, ascii_uppercase
 
-import dateutil
 import numpy as np
 from ase import Atoms
 
@@ -11,6 +9,7 @@ from colabfit.tools.pg.utilities import (
     _empty_dict_from_schema,
     _hash,
     _parse_unstructured_metadata,
+    get_last_modified,
 )
 
 
@@ -229,10 +228,10 @@ class AtomicConfiguration(Atoms):
         co_dict["positions"] = self.positions.astype(float).tolist()
         co_dict["names"] = self.names
         co_dict["labels"] = self.labels
-        co_dict["pbc"] = self.pbc.astype(bool).tolist()
-        co_dict["last_modified"] = dateutil.parser.parse(
-            datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        )
+        cell_lengths = np.linalg.norm(self.cell.array.astype(float), axis=1)
+        pbc = cell_lengths > 1e-6
+        co_dict["pbc"] = pbc.astype(bool).tolist()
+        co_dict["last_modified"] = get_last_modified()
         co_dict["atomic_numbers"] = self.numbers.astype(int).tolist()
         # if self.metadata is not None:
         #    co_dict.update(self.metadata)

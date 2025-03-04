@@ -31,7 +31,7 @@ class Schema:
 
 
 config_schema = Schema(
-    name="configuration",
+    name="configurations",
     columns=[
         column("id", "VARCHAR (256)", False),
         column("hash", "VARCHAR (256) PRIMARY KEY", True),
@@ -60,7 +60,7 @@ config_md_schema = config_schema.add(column("metadata", "VARCHAR (10000)", True)
 
 
 property_object_schema = Schema(
-    name="property_object",
+    name="property_objects",
     columns=[
         column("id", "VARCHAR (256)", False),
         column("hash", "VARCHAR (256) PRIMARY KEY", True),
@@ -90,7 +90,7 @@ property_object_md_schema = property_object_schema.add(
 )
 
 dataset_schema = Schema(
-    name="dataset",
+    name="datasets",
     columns=[
         column("id", "VARCHAR (256)", False),
         column("hash", "VARCHAR (256) PRIMARY KEY", False),
@@ -125,7 +125,7 @@ dataset_schema = Schema(
 
 
 configuration_set_schema = Schema(
-    name="configuration_set",
+    name="configuration_sets",
     columns=[
         column("id", "VARCHAR (256)", False),
         column("hash", "VARCHAR (256) PRIMARY KEY", False),
@@ -150,5 +150,14 @@ co_cs_mapping_schema = Schema(
     columns=[
         column("configuration_id", "VARCHAR (256)", True),
         column("configuration_set_id", "VARCHAR (256)", True),
+    ],
+)
+
+property_definition_schema = Schema(
+    name="property_definitions",
+    columns=[
+        column("hash", "VARCHAR (256) PRIMARY KEY", True),
+        column("last_modified", "VARCHAR (256)", True),
+        column("definition", "VARCHAR (10000)", True),
     ],
 )

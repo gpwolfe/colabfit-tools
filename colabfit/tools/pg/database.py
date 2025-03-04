@@ -1,7 +1,6 @@
-import datetime
 import hashlib
-import json
 import itertools
+import json
 import string
 from functools import partial
 from itertools import islice
@@ -11,35 +10,34 @@ from time import time
 from types import GeneratorType
 
 import boto3
-import dateutil.parser
 import psycopg
-from psycopg.rows import dict_row
+from ase import Atoms
 from botocore.exceptions import ClientError
 from django.utils.crypto import get_random_string
-
+from psycopg import sql
+from psycopg.rows import dict_row
 from tqdm import tqdm
-from ase import Atoms
 
-from colabfit import (
-    ID_FORMAT_STRING,
-)
+from colabfit import ID_FORMAT_STRING
 from colabfit.tools.pg.configuration import AtomicConfiguration
 from colabfit.tools.pg.configuration_set import ConfigurationSet
 from colabfit.tools.pg.dataset import Dataset
 from colabfit.tools.pg.property import Property
-from colabfit.tools.property_definitions import (
-    atomic_forces_pd,
-    energy_pd,
-    cauchy_stress_pd,
-    # quests_descriptor_pd,
-    # mask_selection_pd,
-)
 from colabfit.tools.pg.schema import (
+    co_cs_mapping_schema,
+    config_md_schema,
     config_schema,
     configuration_set_schema,
     dataset_schema,
+    property_definition_schema,
+    property_object_md_schema,
     property_object_schema,
-    co_cs_mapping_schema,
+)
+from colabfit.tools.pg.utilities import get_last_modified
+from colabfit.tools.property_definitions import (  # quests_descriptor_pd,; mask_selection_pd,
+    atomic_forces_pd,
+    cauchy_stress_pd,
+    energy_pd,
 )
 
 VAST_BUCKET_DIR = "colabfit-data"
@@ -198,6 +196,44 @@ class DataManager:
                     property_object_schema,
                 )
 
+    @staticmethod
+    def co_row_dict_to_sql(row_dict):
+        """Convert a row dictionary to a SQL row insert statement."""
+        assert set(row_dict.keys()) == set([x.name for x in config_schema.columns])
+        columns = list(row_dict.keys())
+        name = row_dict["names"][0]
+        dataset_id = row_dict["dataset_ids"][0]
+        sql_compose = sql.SQL(" ").join(
+            [
+                sql.SQL("INSERT INTO"),
+                sql.Identifier(config_schema.name),
+                sql.SQL("("),
+                sql.SQL(",").join(map(sql.Identifier, columns)),
+                sql.SQL(") VALUES ("),
+                sql.SQL(",").join(
+                    [
+                        sql.Literal(val) if val is not None else sql.SQL("NULL")
+                        for val in row_dict.values()
+                    ]
+                ),
+                sql.SQL(")"),
+                sql.SQL("ON CONFLICT (hash) DO UPDATE SET"),
+                sql.Identifier("dataset_ids"),
+                sql.SQL("= array_append("),
+                sql.Identifier("configurations.dataset_ids"),
+                sql.SQL(", "),
+                sql.Literal(dataset_id),
+                sql.SQL(") , "),
+                sql.Identifier("names"),
+                sql.SQL("= array_append("),
+                sql.Identifier("configurations.names"),
+                sql.SQL(", "),
+                sql.Literal(name),
+                sql.SQL(");"),
+            ]
+        )
+        return sql_compose
+
     def load_data_in_batches(
         self,
         configs,
@@ -218,27 +254,9 @@ class DataManager:
 
             if len(co_rows) == 0:
                 continue
+            co_values = map(self.co_row_dict_to_sql, co_rows)
 
-            # make tuple of tuples for data
-            column_headers = tuple(co_rows[0].keys())
-            co_values = []
-            for co_row in co_rows:
-                t = []
-                for column in column_headers:
-                    val = co_row[column]
-                    if column == "last_modified":
-                        val = val.strftime("%Y-%m-%dT%H:%M:%SZ")
-                    # if isinstance(val, (list, tuple, dict)):
-                    #    print (column, type(val[0]))
-                    #    val = str(val)
-                    t.append(val)
-                t.append(co_row["dataset_ids"][0])
-                # t.append(co_row['dataset_ids'][0])
-                co_values.append(t)
-            sql_co = "INSERT INTO configurations (id, hash, last_modified, dataset_ids, configuration_set_ids, chemical_formula_hill, chemical_formula_reduced, chemical_formula_anonymous, elements, elements_ratios, atomic_numbers, nsites, nelements, nperiodic_dimensions, cell, dimension_types, pbc, names, labels, positions) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (hash) DO UPDATE SET dataset_ids = array_append(configurations.dataset_ids, %s);"  # noqa E501
-            # TODO: Need to modify dataset.to_row_dict to properly aggregate values and get data to get two copie
-
-            # SET dataset_ids = CASE WHEN NOT (%s = ANY(configurations.dataset_ids)) THEN array_append(configurations.dataset_ids, %s) ELSE configurations.dataset_ids END;"
+            # TODO: Need to modify dataset.to_row_dict to properly aggregate values and get data to get two copies
 
             # TODO: Ensure all columns are present here
             # TODO: get column names from query and ensure len matches values
@@ -254,11 +272,6 @@ class DataManager:
                         val = po_row[column]
                     except Exception:
                         val = None
-                    if column == "last_modified":
-                        val = val.strftime("%Y-%m-%dT%H:%M:%SZ")
-                    # if isinstance(val, (list, tuple, dict)):
-                    #    print (column, type(val[0]))
-                    #    val = str(val)
                     t.append(val)
                 po_values.append(t)
             # TODO: get column names from query and ensure len matches values
@@ -281,159 +294,41 @@ class DataManager:
                     curs.executemany(sql_co, co_values)
                     curs.executemany(sql_po, po_values)
 
-    def create_ds_table(self):
-        sql = """
-        CREATE TABLE datasets (
-        id VARCHAR (256),
-        hash VARCHAR (256) PRIMARY KEY,
-        name VARCHAR (256),
-        last_modified VARCHAR (256),
-        nconfigurations INT,
-        nproperty_objects INT,
-        nsites INT,
-        elements VARCHAR (1000) [],
-        labels VARCHAR (1000) [],
-        nelements INT,
-        total_elements_ratio DOUBLE PRECISION [],
-        nperiodic_dimensions INT [],
-        dimension_types VARCHAR (1000) [],
-        energy_count INT,
-        energy_mean DOUBLE PRECISION,
-        energy_variance DOUBLE PRECISION,
-        atomic_forces_count INT,
-        cauchy_stress_count INT,
-        authors VARCHAR (256) [],
-        description VARCHAR (10000),
-        extended_id VARCHAR (1000),
-        license VARCHAR (256),
-        links VARCHAR (1000) [],
-        publication_year VARCHAR (256),
-        doi VARCHAR (256)
+    def create_table(self, schema):
+        name_type = [
+            (sql.Identifier(column.name), sql.SQL(column.type))
+            for column in schema.columns
+        ]
+        query = sql.SQL(" ").join(
+            [
+                sql.SQL("CREATE TABLE IF NOT EXISTS"),
+                sql.Identifier(schema.name),
+                sql.SQL("("),
+                sql.SQL(",").join(
+                    [sql.SQL(" ").join([name, type_]) for name, type_ in name_type]
+                ),
+                sql.SQL(")"),
+            ]
         )
-        """
-        with psycopg.connect(
-            dbname=self.dbname,
-            user=self.user,
-            port=self.port,
-            host=self.host,
-            password=self.password,
-        ) as conn:
-            with conn.cursor() as curs:
-                curs.execute(sql)
+        self.execute_sql(query)
+
+    def create_ds_table(self):
+        self.create_table(dataset_schema)
 
     # currently cf-kit table with some properties removed
     def create_po_table(self):
-        sql = """
-        CREATE TABLE property_objects (
-        id VARCHAR (256),
-        hash VARCHAR (256) PRIMARY KEY,
-        last_modified VARCHAR (256),
-        configuration_id VARCHAR (256),
-        dataset_id VARCHAR (256),
-        multiplicity INT,
-        metadata VARCHAR (10000)
-        )
-        """
-        # Don't need anymore
-        """
-        chemical_formula_hill VARCHAR (256),
-        energy DOUBLE PRECISION,
-        atomic_forces_00 DOUBLE PRECISION [] [],
-        atomic_forces_01 DOUBLE PRECISION [] [],
-        atomic_forces_02 DOUBLE PRECISION [] [],
-        atomic_forces_03 DOUBLE PRECISION [] [],
-        atomic_forces_04 DOUBLE PRECISION [] [],
-        atomic_forces_05 DOUBLE PRECISION [] [],
-        atomic_forces_06 DOUBLE PRECISION [] [],
-        atomic_forces_07 DOUBLE PRECISION [] [],
-        atomic_forces_08 DOUBLE PRECISION [] [],
-        atomic_forces_09 DOUBLE PRECISION [] [],
-        atomic_forces_10 DOUBLE PRECISION [] [],
-        atomic_forces_11 DOUBLE PRECISION [] [],
-        atomic_forces_12 DOUBLE PRECISION [] [],
-        atomic_forces_13 DOUBLE PRECISION [] [],
-        atomic_forces_14 DOUBLE PRECISION [] [],
-        atomic_forces_15 DOUBLE PRECISION [] [],
-        atomic_forces_16 DOUBLE PRECISION [] [],
-        atomic_forces_17 DOUBLE PRECISION [] [],
-        atomic_forces_18 DOUBLE PRECISION [] [],
-        atomic_forces_19 DOUBLE PRECISION [] [],
-        cauchy_stress DOUBLE PRECISION [] []
-        )
-        """
-
-        with psycopg.connect(
-            dbname=self.dbname,
-            user=self.user,
-            port=self.port,
-            host=self.host,
-            password=self.password,
-        ) as conn:
-            with conn.cursor() as curs:
-                curs.execute(sql)
+        self.create_table(property_object_md_schema)
 
     def create_co_table(self):
-        # TODO: Metadata
-        sql = """
-        CREATE TABLE configurations (
-        id VARCHAR (256),
-        hash VARCHAR (256) PRIMARY KEY,
-        last_modified VARCHAR (256),
-        dataset_ids VARCHAR (256) [],
-        configuration_set_ids VARCHAR (256) [],
-        chemical_formula_hill VARCHAR (256),
-        chemical_formula_reduced VARCHAR (256),
-        chemical_formula_anonymous VARCHAR (256),
-        elements VARCHAR (256) [],
-        elements_ratios DOUBLE PRECISION [],
-        atomic_numbers INT [],
-        nsites INT,
-        nelements INT,
-        nperiodic_dimensions INT,
-        cell DOUBLE PRECISION [] [],
-        dimension_types INT [],
-        pbc BOOL[],
-        names VARCHAR (256) [],
-        labels VARCHAR (256) [],
-        positions DOUBLE PRECISION [][]
-        )
-        """
-        with psycopg.connect(
-            dbname=self.dbname,
-            user=self.user,
-            port=self.port,
-            host=self.host,
-            password=self.password,
-        ) as conn:
-            with conn.cursor() as curs:
-                curs.execute(sql)
+        self.create_table(config_md_schema)
 
     def create_pd_table(self):
-        sql = """
-        CREATE TABLE property_definitions (
-        hash VARCHAR (256) PRIMARY KEY,
-        last_modified VARCHAR (256),
-        definition VARCHAR (10000)
-        )
-        """
-        with psycopg.connect(
-            dbname=self.dbname,
-            user=self.user,
-            port=self.port,
-            host=self.host,
-            password=self.password,
-        ) as conn:
-            with conn.cursor() as curs:
-                curs.execute(sql)
+        self.create_table(property_definition_schema)
 
     def insert_property_definition(self, property_dict):
         # TODO: try except that property_dict must be jsonable
         json_pd = json.dumps(property_dict)
-        last_modified = dateutil.parser.parse(
-            datetime.datetime.now(tz=datetime.timezone.utc).strftime(
-                "%Y-%m-%dT%H:%M:%SZ"
-            )
-        )
+        last_modified = get_last_modified()
         md5_hash = hashlib.md5(json_pd.encode()).hexdigest()
         sql = """
             INSERT INTO property_definitions (hash, last_modified, definition)
@@ -630,8 +525,6 @@ class DataManager:
                 pass
             else:
                 val = row[column]
-                if column == "last_modified":
-                    val = val.strftime("%Y-%m-%dT%H:%M:%SZ")
                 t.append(val)
             values.append(t)
 
@@ -736,8 +629,6 @@ class DataManager:
                 pass
             else:
                 val = row[column]
-                if column == "last_modified":
-                    val = val.strftime("%Y-%m-%dT%H:%M:%SZ")
                 t.append(val)
             values.append(t)
 
@@ -792,6 +683,18 @@ class DataManager:
                     return curs.fetchall()
                 except:
                     return
+
+    def execute_sql(self, sql):
+        with psycopg.connect(
+            dbname=self.dbname,
+            user=self.user,
+            port=self.port,
+            host=self.host,
+            password=self.password,
+        ) as conn:
+            with conn.cursor() as curs:
+                curs.execute(sql)
+            conn.commit()
 
     def dataset_query(
         self,

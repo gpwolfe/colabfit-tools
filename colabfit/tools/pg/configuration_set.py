@@ -1,9 +1,11 @@
-from datetime import datetime
 from hashlib import sha512
 
-import dateutil.parser
-
-from colabfit.tools.pg.utilities import ELEMENT_MAP, _empty_dict_from_schema
+from colabfit.tools.pg.utilities import (
+    ELEMENT_MAP,
+    _empty_dict_from_schema,
+    get_last_modified,
+)
+from colabfit.tools.pg.schema import configuration_set_schema
 
 
 class ConfigurationSet:
@@ -60,9 +62,7 @@ class ConfigurationSet:
         row_dict["name"] = self.name
         row_dict["description"] = self.description
         row_dict["nconfigurations"] = config_df.select("id").distinct().count()
-        row_dict["last_modified"] = dateutil.parser.parse(
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        )
+        row_dict["last_modified"] = get_last_modified()
         # config_df = config_df.withColumn(
         #     "nsites_multiple", sf.col("nsites") * sf.col("multiplicity")
         # )

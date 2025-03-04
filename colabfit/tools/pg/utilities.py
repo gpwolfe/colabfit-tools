@@ -1,3 +1,4 @@
+import datetime
 import json
 import os
 import sys
@@ -42,6 +43,10 @@ def _hash(row, identifying_key_list, include_keys_in_hash=False):
                 _hash.update(bytes(_format_for_hash(k)))
             _hash.update(bytes(_format_for_hash(v)))
     return int(_hash.hexdigest(), 16)
+
+
+def get_last_modified():
+    return datetime.datetime.now(tz=datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _empty_dict_from_schema(schema):
