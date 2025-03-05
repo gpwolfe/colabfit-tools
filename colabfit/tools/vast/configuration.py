@@ -58,19 +58,17 @@ class AtomicConfiguration(Atoms):
         )
         self.unique_identifier_kw = [
             "atomic_numbers",
-            "positions_00",
+            "positions",
             "cell",
             "pbc",
             "metadata_id",
         ]
         self.struct_identifier_kw = [
             "atomic_numbers",
-            "positions_00",
+            "positions",
             "cell",
             "pbc",
         ]
-        self.unique_identifier_kw.extend([f"positions_{i:02d}" for i in range(1, 20)])
-        self.struct_identifier_kw.extend([f"positions_{i:02d}" for i in range(1, 20)])
         self.info = info
         self.metadata = self.set_metadata(co_md_map)
         if isinstance(names, str):
@@ -238,7 +236,7 @@ class AtomicConfiguration(Atoms):
     def to_row_dict(self):
         co_dict = _empty_dict_from_schema(config_schema)
         co_dict["cell"] = self.cell.array.astype(float).tolist()
-        co_dict["positions_00"] = self.positions.astype(float).tolist()
+        co_dict["positions"] = self.positions.astype(float).tolist()
         co_dict["names"] = self.names
         co_dict["labels"] = self.labels
         cell_lengths = np.linalg.norm(self.cell.array.astype(float), axis=1)
@@ -250,7 +248,7 @@ class AtomicConfiguration(Atoms):
             co_dict["atomic_numbers"],
             co_dict["cell"],
             co_dict["pbc"],
-            co_dict["positions_00"],
+            co_dict["positions"],
         )
         if self.metadata is not None:
             co_dict.update(self.metadata)
