@@ -319,29 +319,32 @@ class Property(dict):
         return self._property_fields
 
     @classmethod
-    def get_property_value(cls, val, info, arrays):
-        if "value" in val:
-            data = val["value"]
-        elif val["field"] in info:
-            data = info[val["field"]]
-        elif val["field"] in arrays:
-            data = arrays[val["field"]]
-        else:
-            return False
-        if isinstance(data, (np.ndarray, list)):
-            data = np.atleast_1d(data).tolist()
-        elif isinstance(data, np.integer):
-            data = int(data)
-        elif isinstance(data, np.floating):
-            data = float(data)
-        elif isinstance(data, (str, bool, int, float)):
-            pass
-        value = {
-            "source-value": data,
-        }
-        if val["units"] not in ["None", None]:
-            value["source-unit"] = val["units"]
-        return value
+    def get_property_value(cls, property_dict, info, arrays):
+        return_val = {}
+        for key, val in property_dict.items():
+            if "value" in val:
+                data = val["value"]
+            elif val["field"] in info:
+                data = info[val["field"]]
+            elif val["field"] in arrays:
+                data = arrays[val["field"]]
+            else:
+                return False
+            if isinstance(data, (np.ndarray, list)):
+                data = np.atleast_1d(data).tolist()
+            elif isinstance(data, np.integer):
+                data = int(data)
+            elif isinstance(data, np.floating):
+                data = float(data)
+            elif isinstance(data, (str, bool, int, float)):
+                pass
+            value = {
+                "source-value": data,
+            }
+            if val["units"] not in ["None", None]:
+                value["source-unit"] = val["units"]
+            return_val[key] = value
+        return return_val
 
     @classmethod
     def get_kim_instance(
@@ -473,23 +476,36 @@ class Property(dict):
                 if p_info is None:
                     print(f"property {pname} not found in MAIN_KEY_MAP")
                     continue
-                if p_info.key not in instance:
+                if p_info.key not in pmap:
                     print(
-                        f"Property {p_info.key} not found in property map for {pname}: {pmap}"  # noqa E501
+                        f"Property {p_info.key} not found in pmap for {pname}: {pmap}"  # noqa E501
                     )
                     pdef_dict.pop(pname)
                     continue
                 instance = instance.copy()
-                for key, val in pmap.items():
-                    pval = cls.get_property_value(
-                        val, configuration.info, configuration.arrays
+                pval = cls.get_property_value(
+                    pmap, configuration.info, configuration.arrays
+                )
+                if pval is False:
+                    print(
+                        f"Property {p_info.key} not found in arrays or info for {pname}: {pmap}"  # noqa E501
                     )
-                    if pval is False:
-                        print(
-                            f"Property {p_info.key} not found in arrays or info for {pname}: {pmap}"  # noqa E501
-                        )
                     pdef_dict.pop(pname)
                     continue
+                instance.update(pval)
+
+                # for key, val in pmap.items():
+                #     print('pmap',pmap)
+                #     pval = cls.get_property_value(
+                #         val, configuration.info, configuration.arrays
+                #     )
+                #     if pval is False:
+                #         print(
+                #             f"Property {p_info.key} not found in arrays or info for {pname}: {pmap}"  # noqa E501
+                #         )
+                #         pdef_dict.pop(pname)
+                #         continue
+                #     instance[p_info.key] = pval
 
                 # hack to get around OpenKIM requiring the property-name be a dict
                 prop_name_tmp = pdef_dict[pname].pop("property-name")
