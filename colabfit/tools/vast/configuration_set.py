@@ -1,12 +1,14 @@
 from collections import namedtuple
-from datetime import datetime
 from hashlib import sha512
 
-import dateutil.parser
 from pyspark.sql import functions as sf
 
 from colabfit.tools.vast.schema import configuration_set_schema
-from colabfit.tools.vast.utilities import ELEMENT_MAP, _empty_dict_from_schema
+from colabfit.tools.vast.utilities import (
+    ELEMENT_MAP,
+    _empty_dict_from_schema,
+    get_last_modified,
+)
 
 
 class ConfigurationSet:
@@ -79,9 +81,7 @@ class ConfigurationSet:
         row_dict["dimension_types"] = agg_row["dimension_types"]
         row_dict["elements"] = sorted(agg_row["elements"])
         row_dict["nelements"] = len(row_dict["elements"])
-        row_dict["last_modified"] = dateutil.parser.parse(
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        )
+        row_dict["last_modified"] = get_last_modified()
         atomic_ratios_df = (
             config_df.select("atomic_numbers")
             .withColumn("single_element", sf.explode("atomic_numbers"))

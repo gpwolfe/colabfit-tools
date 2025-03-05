@@ -3,6 +3,8 @@ import os
 import sys
 from ast import literal_eval
 from hashlib import sha512
+import dateutil.parser
+import datetime
 
 import numpy as np
 import pyarrow as pa
@@ -112,6 +114,12 @@ def config_struct_hash_udf(atomic_numbers, cell, pbc, *positions):
     _hash.update(bytes(_format_for_hash(literal_eval(pbc))))
     _hash.update(bytes(_format_for_hash(sorted_positions)))
     return str(int(_hash.hexdigest(), 16))
+
+
+def get_last_modified():
+    return dateutil.parser.parse(
+        datetime.datetime.now(tz=datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    )
 
 
 def get_spark_field_type(schema, field_name):

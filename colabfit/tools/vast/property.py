@@ -1,4 +1,3 @@
-import datetime
 import itertools
 import json
 import os
@@ -7,7 +6,6 @@ import warnings
 from collections import namedtuple
 from copy import deepcopy
 
-import dateutil.parser
 import kim_edn
 import numpy as np
 from ase.units import create_units
@@ -23,6 +21,7 @@ from colabfit.tools.vast.utilities import (
     _empty_dict_from_schema,
     _hash,
     _parse_unstructured_metadata,
+    get_last_modified,
 )
 
 from kim_property.create import KIM_PROPERTIES
@@ -76,6 +75,8 @@ _hash_ignored_fields = [
     "multiplicity",
     "metadata_path",
     "metadata_size",
+    "mean_force_norm",
+    "max_force_norm",
 ]
 
 
@@ -253,28 +254,28 @@ class Property(dict):
                 If True, converts units to those expected by ColabFit. Default
                 is True
         """
-        # self.unique_identifier_kw = [
-        #     k
-        #     for k in property_object_schema.fieldNames()
-        #     if k not in _hash_ignored_fields
-        # ]
         self.unique_identifier_kw = [
-            "adsorption_energy",
-            "atomic_forces_00",
-            "atomization_energy",
-            "cauchy_stress",
-            "cauchy_stress_volume_normalized",
-            "chemical_formula_hill",
-            "configuration_id",
-            "dataset_id",
-            "electronic_band_gap",
-            "electronic_band_gap_type",
-            "energy",
-            "formation_energy",
-            "metadata_id",
-            "method",
-            "software",
+            k
+            for k in property_object_schema.fieldNames()
+            if k not in _hash_ignored_fields
         ]
+        # self.unique_identifier_kw = [
+        #     "adsorption_energy",
+        #     "atomic_forces_00",
+        #     "atomization_energy",
+        #     "cauchy_stress",
+        #     "cauchy_stress_volume_normalized",
+        #     "chemical_formula_hill",
+        #     "configuration_id",
+        #     "dataset_id",
+        #     "electronic_band_gap",
+        #     "electronic_band_gap_type",
+        #     "energy",
+        #     "formation_energy",
+        #     "metadata_id",
+        #     "method",
+        #     "software",
+        # ]
         self.unique_identifier_kw.extend(
             [f"atomic_forces_{i:02d}" for i in range(1, 20)]
         )
@@ -316,6 +317,34 @@ class Property(dict):
     @property
     def property_fields(self):
         return self._property_fields
+
+    @classmethod
+    def get_property_value(cls, property_dict, info, arrays):
+        return_val = {}
+        for key, val in property_dict.items():
+            if "value" in val:
+                data = val["value"]
+            elif val["field"] in info:
+                data = info[val["field"]]
+            elif val["field"] in arrays:
+                data = arrays[val["field"]]
+            else:
+                return False
+            if isinstance(data, (np.ndarray, list)):
+                data = np.atleast_1d(data).tolist()
+            elif isinstance(data, np.integer):
+                data = int(data)
+            elif isinstance(data, np.floating):
+                data = float(data)
+            elif isinstance(data, (str, bool, int, float)):
+                pass
+            value = {
+                "source-value": data,
+            }
+            if val["units"] not in ["None", None]:
+                value["source-unit"] = val["units"]
+            return_val[key] = value
+        return return_val
 
     @classmethod
     def get_kim_instance(
@@ -434,10 +463,10 @@ class Property(dict):
         }
         props_dict = {}
         pi_md = None
-        for pname, pmap_val in property_map.items():
+        for pname, pmap in property_map.items():
             instance = instances.get(pname, None)
             if pname == "_metadata":
-                pi_md, method, software = md_from_map(pmap_val, configuration)
+                pi_md, method, software = md_from_map(pmap, configuration)
                 props_dict["method"] = method
                 props_dict["software"] = software
             elif instance is None:
@@ -447,44 +476,44 @@ class Property(dict):
                 if p_info is None:
                     print(f"property {pname} not found in MAIN_KEY_MAP")
                     continue
-                instance = instance.copy()
-                # for pmap_i, pmap in enumerate(pmap_list):
-                for key, val in pmap_val.items():
-                    if "value" in val:
-                        # Default value provided
-                        data = val["value"]
-                    elif val["field"] in configuration.info:
-                        data = configuration.info[val["field"]]
-                    elif val["field"] in configuration.arrays:
-                        data = configuration.arrays[val["field"]]
-                    else:
-                        # Key not found on configurations. Will be checked later
-                        continue
-
-                    if isinstance(data, (np.ndarray, list)):
-                        data = np.atleast_1d(data).tolist()
-                    elif isinstance(data, np.integer):
-                        data = int(data)
-                    elif isinstance(data, np.floating):
-                        data = float(data)
-                    instance[key] = {
-                        "source-value": data,
-                    }
-                    if (val["units"] != "None") and (val["units"] is not None):
-                        instance[key]["source-unit"] = val["units"]
-                if p_info.key not in instance:
+                if p_info.key not in pmap:
                     print(
-                        f"Property {p_info.key} not found in property map for {pname}: {pmap_val}"  # noqa E501
+                        f"Property {p_info.key} not found in pmap for {pname}: {pmap}"  # noqa E501
                     )
                     pdef_dict.pop(pname)
                     continue
+                instance = instance.copy()
+                pval = cls.get_property_value(
+                    pmap, configuration.info, configuration.arrays
+                )
+                if pval is False:
+                    print(
+                        f"Property {p_info.key} not found in arrays or info for {pname}: {pmap}"  # noqa E501
+                    )
+                    pdef_dict.pop(pname)
+                    continue
+                instance.update(pval)
+
+                # for key, val in pmap.items():
+                #     print('pmap',pmap)
+                #     pval = cls.get_property_value(
+                #         val, configuration.info, configuration.arrays
+                #     )
+                #     if pval is False:
+                #         print(
+                #             f"Property {p_info.key} not found in arrays or info for {pname}: {pmap}"  # noqa E501
+                #         )
+                #         pdef_dict.pop(pname)
+                #         continue
+                #     instance[p_info.key] = pval
+
                 # hack to get around OpenKIM requiring the property-name be a dict
                 prop_name_tmp = pdef_dict[pname].pop("property-name")
                 check_instance_optional_key_marked_required_are_present(
                     instance, pdef_dict[pname]
                 )
                 pdef_dict[pname]["property-name"] = prop_name_tmp
-                props_dict[pname] = {k: v for k, v in instance.items()}
+                props_dict[pname] = instance
         props_dict["chemical_formula_hill"] = configuration.get_chemical_formula()
         props_dict["configuration_id"] = configuration.id
 
@@ -517,11 +546,7 @@ class Property(dict):
                 row_dict.update(prop_to_row_mapper["energy"](key, val))
             else:
                 row_dict.update(prop_to_row_mapper[key](val))
-        row_dict["last_modified"] = dateutil.parser.parse(
-            datetime.datetime.now(tz=datetime.timezone.utc).strftime(
-                "%Y-%m-%dT%H:%M:%SZ"
-            )
-        )
+        row_dict["last_modified"] = get_last_modified()
         row_dict["chemical_formula_hill"] = self.chemical_formula_hill
         row_dict["multiplicity"] = 1
         row_dict["dataset_id"] = self.dataset_id

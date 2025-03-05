@@ -1,4 +1,3 @@
-import datetime
 import itertools
 import string
 from ast import literal_eval
@@ -10,7 +9,6 @@ from time import time
 from types import GeneratorType
 
 import boto3
-import dateutil.parser
 import pyarrow as pa
 import pyspark.sql.functions as sf
 from botocore.exceptions import ClientError
@@ -50,6 +48,7 @@ from colabfit.tools.vast.schema import (
 )
 from colabfit.tools.vast.utilities import (
     _hash,
+    get_last_modified,
     get_spark_field_type,
     spark_schema_to_arrow_schema,
     split_long_string_cols,
@@ -486,11 +485,7 @@ class VastDataLoader:
                 else:
                     duplicate_df = self.concat_constant_elem(duplicate_df, col, elem)
 
-            update_time = dateutil.parser.parse(
-                datetime.datetime.now(tz=datetime.timezone.utc).strftime(
-                    "%Y-%m-%dT%H:%M:%SZ"
-                )
-            )
+            update_time = get_last_modified()
             duplicate_df = duplicate_df.withColumn(
                 "last_modified", sf.lit(update_time).cast("timestamp")
             )
@@ -617,11 +612,7 @@ class VastDataLoader:
                 )
                 df = df.withColumn("multiplicity", sf.lit(0))
                 print(f"Zeroed {df.count()} property objects")
-                update_time = dateutil.parser.parse(
-                    datetime.datetime.now(tz=datetime.timezone.utc).strftime(
-                        "%Y-%m-%dT%H:%M:%SZ"
-                    )
-                )
+                update_time = get_last_modified()
                 df = df.withColumn(
                     "last_modified", sf.lit(update_time).cast("timestamp")
                 )
@@ -807,11 +798,7 @@ class VastDataLoader:
             )
         if spark_dict["cauchy_stress"] is not None:
             spark_dict["cauchy_stress"] = literal_eval(spark_dict["cauchy_stress"])
-        spark_dict["last_modified"] = dateutil.parser.parse(
-            datetime.datetime.now(tz=datetime.timezone.utc).strftime(
-                "%Y-%m-%dT%H:%M:%SZ"
-            )
-        )
+        spark_dict["last_modified"] = get_last_modified()
         spark_dict["hash"] = _hash(spark_dict, hash_keys, include_keys_in_hash=False)
         if spark_dict["cauchy_stress"] is not None:
             spark_dict["cauchy_stress"] = str(spark_dict["cauchy_stress"])
@@ -839,11 +826,7 @@ class VastDataLoader:
                     ]
                 )
             )
-        spark_dict["last_modified"] = dateutil.parser.parse(
-            datetime.datetime.now(tz=datetime.timezone.utc).strftime(
-                "%Y-%m-%dT%H:%M:%SZ"
-            )
-        )
+        spark_dict["last_modified"] = get_last_modified()
         spark_dict["hash"] = _hash(spark_dict, hash_keys, include_keys_in_hash=False)
         return spark_dict["hash"]
 

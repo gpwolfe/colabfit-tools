@@ -1,8 +1,6 @@
-import datetime
 from string import ascii_lowercase, ascii_uppercase
 from types import NoneType
 
-import dateutil
 import numpy as np
 from ase import Atoms
 
@@ -13,6 +11,7 @@ from colabfit.tools.vast.utilities import (
     _hash,
     _parse_unstructured_metadata,
     config_struct_hash,
+    get_last_modified,
 )
 
 
@@ -242,10 +241,10 @@ class AtomicConfiguration(Atoms):
         co_dict["positions_00"] = self.positions.astype(float).tolist()
         co_dict["names"] = self.names
         co_dict["labels"] = self.labels
-        co_dict["pbc"] = self.pbc.astype(bool).tolist()
-        co_dict["last_modified"] = dateutil.parser.parse(
-            datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        )
+        cell_lengths = np.linalg.norm(self.cell.array.astype(float), axis=1)
+        pbc = cell_lengths > 1e-10
+        co_dict["pbc"] = pbc.astype(bool).tolist()
+        co_dict["last_modified"] = get_last_modified()
         co_dict["atomic_numbers"] = self.numbers.astype(int).tolist()
         co_dict["structure_hash"] = config_struct_hash(
             co_dict["atomic_numbers"],

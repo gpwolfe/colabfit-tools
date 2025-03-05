@@ -1,11 +1,8 @@
-import datetime
 import warnings
-
-import dateutil
 from unidecode import unidecode
 
 from colabfit import MAX_STRING_LENGTH
-from colabfit.tools.pg.utilities import ELEMENT_MAP, _hash
+from colabfit.tools.pg.utilities import ELEMENT_MAP, _hash, get_last_modified
 
 import numpy as np
 
@@ -127,11 +124,7 @@ class Dataset:
     # aggregate stuff
     def to_row_dict(self, configs, props):
         row_dict = {}
-        row_dict["last_modified"] = dateutil.parser.parse(
-            datetime.datetime.now(tz=datetime.timezone.utc).strftime(
-                "%Y-%m-%dT%H:%M:%SZ"
-            )
-        )
+        row_dict["last_modified"] = get_last_modified()
         row_dict["nconfiguration_sets"] = len(self.configuration_set_ids)
         row_dict["nconfigurations"] = len(configs)
         row_dict["nproperty_objects"] = len(props)

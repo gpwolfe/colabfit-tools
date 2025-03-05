@@ -1,7 +1,6 @@
-import datetime
 import hashlib
-import json
 import itertools
+import json
 import string
 from functools import partial
 from itertools import islice
@@ -11,46 +10,33 @@ from time import time
 from types import GeneratorType
 
 import boto3
-import dateutil.parser
 import psycopg
-from psycopg.rows import dict_row
+from ase import Atoms
 from botocore.exceptions import ClientError
 from django.utils.crypto import get_random_string
-
+from psycopg import sql
+from psycopg.rows import dict_row
 from tqdm import tqdm
-from ase import Atoms
 
-from colabfit import (
-    ID_FORMAT_STRING,
-)
+from colabfit import ID_FORMAT_STRING
 from colabfit.tools.pg.configuration import AtomicConfiguration
 from colabfit.tools.pg.configuration_set import ConfigurationSet
 from colabfit.tools.pg.dataset import Dataset
 from colabfit.tools.pg.property import Property
-from colabfit.tools.property_definitions import (
-    atomic_forces_pd,
-    energy_pd,
-    cauchy_stress_pd,
-    # quests_descriptor_pd,
-    # mask_selection_pd,
-)
 from colabfit.tools.pg.schema import (
+    config_md_schema,
     config_schema,
     configuration_set_schema,
     dataset_schema,
+    property_definition_schema,
+    property_object_md_schema,
     property_object_schema,
-    co_cs_mapping_schema,
 )
+from colabfit.tools.pg.utilities import get_last_modified
 
 VAST_BUCKET_DIR = "colabfit-data"
 VAST_METADATA_DIR = "data/MD"
 NSITES_COL_SPLITS = 20
-_CONFIGS_COLLECTION = "test_configs"
-_CONFIGSETS_COLLECTION = "test_config_sets"
-_DATASETS_COLLECTION = "test_datasets"
-_PROPOBJECT_COLLECTION = "test_prop_objects"
-_CO_CS_MAP_COLLECTION = "test_co_cs_map"
-_MAX_STRING_LEN = 60000
 
 
 def generate_string():
@@ -71,15 +57,27 @@ def batched(configs, n):
 class DataManager:
     def __init__(
         self,
-        dbname,
-        user,
-        port,
-        host,
-        password=None,
+        dbname: str,
+        user: str,
+        port: int,
+        host: str,
+        password: str = None,
         nprocs: int = 1,
         standardize_energy: bool = False,
-        read_write_batch_size=10000,
+        read_write_batch_size: int = 10000,
     ):
+        """
+        Args:
+            dbname (str): Name of the database.
+            user (str): User name.
+            port (int): Port number.
+            host (str): Host name.
+            password (str): Password.
+            nprocs (int): Number of processes to use if using multiprocessing
+                (i.e. while reading data files).
+            standardize_energy (bool): Whether to standardize energy.
+            read_write_batch_size (int): Batch size for reading and writing data.
+        """
         self.dbname = dbname
         self.user = user
         self.port = port
@@ -186,17 +184,79 @@ class DataManager:
                     property_object_schema,
                 )
 
+    @staticmethod
+    def get_co_sql():
+        columns = [x.name for x in config_md_schema.columns]
+        sql_compose = sql.SQL(" ").join(
+            [
+                sql.SQL("INSERT INTO"),
+                sql.Identifier(config_md_schema.name),
+                sql.SQL("("),
+                sql.SQL(",").join(map(sql.Identifier, columns)),
+                sql.SQL(") VALUES ("),
+                sql.SQL(",").join(sql.Placeholder() * len(columns)),
+                sql.SQL(")"),
+                sql.SQL("ON CONFLICT (hash) DO UPDATE SET"),
+                sql.Identifier("dataset_ids"),
+                sql.SQL("= array_append("),
+                sql.Identifier("configurations.dataset_ids"),
+                sql.SQL(","),
+                sql.Placeholder(),
+                sql.SQL(") ,"),
+                sql.Identifier("names"),
+                sql.SQL("= array_append("),
+                sql.Identifier("configurations.names"),
+                sql.SQL(","),
+                sql.Placeholder(),
+                sql.SQL(");"),
+            ]
+        )
+        return sql_compose
+
+    @staticmethod
+    def get_po_sql():
+        columns = [x.name for x in property_object_md_schema.columns]
+        sql_compose = sql.SQL(" ").join(
+            [
+                sql.SQL("INSERT INTO"),
+                sql.Identifier(property_object_md_schema.name),
+                sql.SQL("("),
+                sql.SQL(",").join(map(sql.Identifier, columns)),
+                sql.SQL(") VALUES ("),
+                sql.SQL(",").join(sql.Placeholder() * len(columns)),
+                sql.SQL(")"),
+                sql.SQL(
+                    "ON CONFLICT (hash) DO UPDATE SET multiplicity = {}.multiplicity + 1;"
+                ).format(sql.Identifier(property_object_md_schema.name)),
+            ]
+        )
+        return sql_compose
+
+    @staticmethod
+    def co_row_to_values(row_dict):
+        name = row_dict["names"][0]
+        dataset_id = row_dict["dataset_ids"][0]
+        vals = [row_dict.get(k) for k in config_md_schema.columns]
+        vals.append(dataset_id)
+        vals.append(name)
+        return vals
+
+    @staticmethod
+    def po_row_to_values(row_dict):
+        vals = [row_dict.get(k) for k in property_object_md_schema.columns]
+        return vals
+
     def load_data_in_batches(
         self,
         configs,
         dataset_id=None,
-        config_table=None,
-        prop_object_table=None,
         prop_map=None,
     ):
         """Load data to PostgreSQL in batches."""
 
         co_po_rows = self.gather_co_po_in_batches(configs, dataset_id, prop_map)
+        co_sql = self.get_co_sql()
+        po_sql = self.get_po_sql()
         for co_po_batch in tqdm(
             co_po_rows,
             desc="Loading data to database: ",
@@ -206,58 +266,12 @@ class DataManager:
 
             if len(co_rows) == 0:
                 continue
-
-            # make tuple of tuples for data
-            column_headers = tuple(co_rows[0].keys())
-            co_values = []
-            for co_row in co_rows:
-                t = []
-                for column in column_headers:
-                    val = co_row[column]
-                    if column == "last_modified":
-                        val = val.strftime("%Y-%m-%dT%H:%M:%SZ")
-                    # if isinstance(val, (list, tuple, dict)):
-                    #    print (column, type(val[0]))
-                    #    val = str(val)
-                    t.append(val)
-                t.append(co_row["dataset_ids"][0])
-                # t.append(co_row['dataset_ids'][0])
-                co_values.append(t)
-            sql_co = "INSERT INTO configurations (id, hash, last_modified, dataset_ids, configuration_set_ids, chemical_formula_hill, chemical_formula_reduced, chemical_formula_anonymous, elements, elements_ratios, atomic_numbers, nsites, nelements, nperiodic_dimensions, cell, dimension_types, pbc, names, labels, positions) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (hash) DO UPDATE SET dataset_ids = array_append(configurations.dataset_ids, %s);"  # noqa E501
-            # TODO: Need to modify dataset.to_row_dict to properly aggregate values and get data to get two copie
-
-            # SET dataset_ids = CASE WHEN NOT (%s = ANY(configurations.dataset_ids)) THEN array_append(configurations.dataset_ids, %s) ELSE configurations.dataset_ids END;"
-
+            # TODO: Need to modify dataset.to_row_dict to properly aggregate values and get data to get two copies
             # TODO: Ensure all columns are present here
             # TODO: get column names from query and ensure len matches values
-            columns = list(zip(*self.get_table_schema("property_objects")))[0]
-            column_string = ", ".join(list(columns))
-            val_string = ", ".join(["%s"] * len(columns))
-            po_values = []
-            for po_row in po_rows:
-                t = []
-                for column in columns:
-                    # print (column)
-                    try:
-                        val = po_row[column]
-                    except Exception:
-                        val = None
-                    if column == "last_modified":
-                        val = val.strftime("%Y-%m-%dT%H:%M:%SZ")
-                    # if isinstance(val, (list, tuple, dict)):
-                    #    print (column, type(val[0]))
-                    #    val = str(val)
-                    t.append(val)
-                po_values.append(t)
-            # TODO: get column names from query and ensure len matches values
-            sql_po = f"""
-                INSERT INTO property_objects ({column_string})
-                VALUES ({val_string})
-                ON CONFLICT (hash)
-                DO UPDATE SET multiplicity = property_objects.multiplicity + 1;
-
-            """
-
+            # columns = list(zip(*self.get_table_schema("property_objects")))[0]
+            co_values = map(self.co_row_to_values, co_rows)
+            po_values = map(self.po_row_to_values, po_rows)
             with psycopg.connect(
                 dbname=self.dbname,
                 user=self.user,
@@ -266,162 +280,44 @@ class DataManager:
                 password=self.password,
             ) as conn:
                 with conn.cursor() as curs:
-                    curs.executemany(sql_co, co_values)
-                    curs.executemany(sql_po, po_values)
+                    curs.executemany(co_sql, co_values)
+                    curs.executemany(po_sql, po_values)
+
+    def create_table(self, schema):
+        name_type = [
+            (sql.Identifier(column.name), sql.SQL(column.type))
+            for column in schema.columns
+        ]
+        query = sql.SQL(" ").join(
+            [
+                sql.SQL("CREATE TABLE IF NOT EXISTS"),
+                sql.Identifier(schema.name),
+                sql.SQL("("),
+                sql.SQL(",").join(
+                    [sql.SQL(" ").join([name, type_]) for name, type_ in name_type]
+                ),
+                sql.SQL(")"),
+            ]
+        )
+        self.execute_sql(query)
 
     def create_ds_table(self):
-        sql = """
-        CREATE TABLE datasets (
-        id VARCHAR (256),
-        hash VARCHAR (256) PRIMARY KEY,
-        name VARCHAR (256),
-        last_modified VARCHAR (256),
-        nconfigurations INT,
-        nproperty_objects INT,
-        nsites INT,
-        elements VARCHAR (1000) [],
-        labels VARCHAR (1000) [],
-        nelements INT,
-        total_elements_ratio DOUBLE PRECISION [],
-        nperiodic_dimensions INT [],
-        dimension_types VARCHAR (1000) [],
-        energy_count INT,
-        energy_mean DOUBLE PRECISION,
-        energy_variance DOUBLE PRECISION,
-        atomic_forces_count INT,
-        cauchy_stress_count INT,
-        authors VARCHAR (256) [],
-        description VARCHAR (10000),
-        extended_id VARCHAR (1000),
-        license VARCHAR (256),
-        links VARCHAR (1000) [],
-        publication_year VARCHAR (256),
-        doi VARCHAR (256)
-        )
-        """
-        with psycopg.connect(
-            dbname=self.dbname,
-            user=self.user,
-            port=self.port,
-            host=self.host,
-            password=self.password,
-        ) as conn:
-            with conn.cursor() as curs:
-                curs.execute(sql)
+        self.create_table(dataset_schema)
 
     # currently cf-kit table with some properties removed
     def create_po_table(self):
-        sql = """
-        CREATE TABLE property_objects (
-        id VARCHAR (256),
-        hash VARCHAR (256) PRIMARY KEY,
-        last_modified VARCHAR (256),
-        configuration_id VARCHAR (256),
-        dataset_id VARCHAR (256),
-        multiplicity INT,
-        metadata VARCHAR (10000)
-        )
-        """
-        # Don't need anymore
-        """
-        chemical_formula_hill VARCHAR (256),
-        energy DOUBLE PRECISION,
-        atomic_forces_00 DOUBLE PRECISION [] [],
-        atomic_forces_01 DOUBLE PRECISION [] [],
-        atomic_forces_02 DOUBLE PRECISION [] [],
-        atomic_forces_03 DOUBLE PRECISION [] [],
-        atomic_forces_04 DOUBLE PRECISION [] [],
-        atomic_forces_05 DOUBLE PRECISION [] [],
-        atomic_forces_06 DOUBLE PRECISION [] [],
-        atomic_forces_07 DOUBLE PRECISION [] [],
-        atomic_forces_08 DOUBLE PRECISION [] [],
-        atomic_forces_09 DOUBLE PRECISION [] [],
-        atomic_forces_10 DOUBLE PRECISION [] [],
-        atomic_forces_11 DOUBLE PRECISION [] [],
-        atomic_forces_12 DOUBLE PRECISION [] [],
-        atomic_forces_13 DOUBLE PRECISION [] [],
-        atomic_forces_14 DOUBLE PRECISION [] [],
-        atomic_forces_15 DOUBLE PRECISION [] [],
-        atomic_forces_16 DOUBLE PRECISION [] [],
-        atomic_forces_17 DOUBLE PRECISION [] [],
-        atomic_forces_18 DOUBLE PRECISION [] [],
-        atomic_forces_19 DOUBLE PRECISION [] [],
-        cauchy_stress DOUBLE PRECISION [] []
-        )
-        """
-
-        with psycopg.connect(
-            dbname=self.dbname,
-            user=self.user,
-            port=self.port,
-            host=self.host,
-            password=self.password,
-        ) as conn:
-            with conn.cursor() as curs:
-                curs.execute(sql)
+        self.create_table(property_object_md_schema)
 
     def create_co_table(self):
-        # TODO: Metadata
-        sql = """
-        CREATE TABLE configurations (
-        id VARCHAR (256),
-        hash VARCHAR (256) PRIMARY KEY,
-        last_modified VARCHAR (256),
-        dataset_ids VARCHAR (256) [],
-        configuration_set_ids VARCHAR (256) [],
-        chemical_formula_hill VARCHAR (256),
-        chemical_formula_reduced VARCHAR (256),
-        chemical_formula_anonymous VARCHAR (256),
-        elements VARCHAR (256) [],
-        elements_ratios DOUBLE PRECISION [],
-        atomic_numbers INT [],
-        nsites INT,
-        nelements INT,
-        nperiodic_dimensions INT,
-        cell DOUBLE PRECISION [] [],
-        dimension_types INT [],
-        pbc BOOL[],
-        names VARCHAR (256) [],
-        labels VARCHAR (256) [],
-        positions DOUBLE PRECISION [][]
-        )
-        """
-        with psycopg.connect(
-            dbname=self.dbname,
-            user=self.user,
-            port=self.port,
-            host=self.host,
-            password=self.password,
-        ) as conn:
-            with conn.cursor() as curs:
-                curs.execute(sql)
+        self.create_table(config_md_schema)
 
     def create_pd_table(self):
-        sql = """
-        CREATE TABLE property_definitions (
-        hash VARCHAR (256) PRIMARY KEY,
-        last_modified VARCHAR (256),
-        definition VARCHAR (10000)
-        )
-        """
-        with psycopg.connect(
-            dbname=self.dbname,
-            user=self.user,
-            port=self.port,
-            host=self.host,
-            password=self.password,
-        ) as conn:
-            with conn.cursor() as curs:
-                curs.execute(sql)
+        self.create_table(property_definition_schema)
 
     def insert_property_definition(self, property_dict):
         # TODO: try except that property_dict must be jsonable
         json_pd = json.dumps(property_dict)
-        last_modified = dateutil.parser.parse(
-            datetime.datetime.now(tz=datetime.timezone.utc).strftime(
-                "%Y-%m-%dT%H:%M:%SZ"
-            )
-        )
+        last_modified = get_last_modified()
         md5_hash = hashlib.md5(json_pd.encode()).hexdigest()
         sql = """
             INSERT INTO property_definitions (hash, last_modified, definition)
@@ -472,21 +368,11 @@ class DataManager:
              SELECT definition
              FROM property_definitions;
         """
-        with psycopg.connect(
-            dbname=self.dbname,
-            user=self.user,
-            port=self.port,
-            host=self.host,
-            password=self.password,
-            row_factory=dict_row,
-        ) as conn:
-            with conn.cursor() as curs:
-                curs.execute(sql)
-                defs = curs.fetchall()
-                dict_defs = []
-                for d in defs:
-                    dict_defs.append(json.loads(d["definition"]))
-                return dict_defs
+        defs = self.general_query(sql)
+        dict_defs = []
+        for d in defs:
+            dict_defs.append(json.loads(d["definition"]))
+        return dict_defs
 
     def insert_data_and_create_dataset(
         self,
@@ -510,7 +396,6 @@ class DataManager:
         if dataset_id is None:
             dataset_id = generate_ds_id()
 
-        # convert to CF AtomicConfiguration if not already
         converted_configs = []
         for c in configs:
             if isinstance(c, Atoms):
@@ -618,8 +503,6 @@ class DataManager:
                 pass
             else:
                 val = row[column]
-                if column == "last_modified":
-                    val = val.strftime("%Y-%m-%dT%H:%M:%SZ")
                 t.append(val)
             values.append(t)
 
@@ -638,15 +521,7 @@ class DataManager:
             ALTER TABLE {table}
             ADD COLUMN {column_name} {data_type};
         """
-        with psycopg.connect(
-            dbname=self.dbname,
-            user=self.user,
-            port=self.port,
-            host=self.host,
-            password=self.password,
-        ) as conn:
-            with conn.cursor() as curs:
-                curs.execute(sql)
+        self.execute_sql(sql)
 
     def update_dataset(self, configs, dataset_id, prop_map):
         # convert to CF AtomicConfiguration if not already
@@ -724,8 +599,6 @@ class DataManager:
                 pass
             else:
                 val = row[column]
-                if column == "last_modified":
-                    val = val.strftime("%Y-%m-%dT%H:%M:%SZ")
                 t.append(val)
             values.append(t)
 
@@ -752,18 +625,7 @@ class DataManager:
         ON
             c.id = po.configuration_id;
         """
-        with psycopg.connect(
-            dbname=self.dbname,
-            user=self.user,
-            port=self.port,
-            host=self.host,
-            password=self.password,
-            row_factory=dict_row,
-        ) as conn:
-            with conn.cursor() as curs:
-                curs.execute(sql)
-                table = curs.fetchall()
-                return table
+        return self.general_query(sql)
 
     def general_query(self, sql):
         with psycopg.connect(
@@ -780,6 +642,17 @@ class DataManager:
                     return curs.fetchall()
                 except:
                     return
+
+    def execute_sql(self, sql):
+        with psycopg.connect(
+            dbname=self.dbname,
+            user=self.user,
+            port=self.port,
+            host=self.host,
+            password=self.password,
+        ) as conn:
+            with conn.cursor() as curs:
+                curs.execute(sql)
 
     def dataset_query(
         self,
@@ -803,17 +676,7 @@ class DataManager:
                 "Only configurations and property_objects tables are supported"
             )
 
-        with psycopg.connect(
-            dbname=self.dbname,
-            user=self.user,
-            port=self.port,
-            host=self.host,
-            password=self.password,
-            row_factory=dict_row,
-        ) as conn:
-            with conn.cursor() as curs:
-                r = curs.execute(sql)
-                return curs.fetchall()
+        return self.general_query(sql)
 
     def get_dataset(self, dataset_id):
         sql = f"""
@@ -822,17 +685,7 @@ class DataManager:
                 WHERE id = '{dataset_id}';
             """
         print(dataset_id)
-        with psycopg.connect(
-            dbname=self.dbname,
-            user=self.user,
-            port=self.port,
-            host=self.host,
-            password=self.password,
-            row_factory=dict_row,
-        ) as conn:
-            with conn.cursor() as curs:
-                r = curs.execute(sql)
-                return curs.fetchall()
+        return self.general_query(sql)
 
     def create_configuration_sets(
         self,
