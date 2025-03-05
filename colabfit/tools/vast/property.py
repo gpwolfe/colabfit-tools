@@ -103,7 +103,7 @@ def atomic_forces_to_schema(af_prop: dict):
     if af_prop.get("forces") is None:
         return {}
     af_dict = {
-        "atomic_forces_00": af_prop["forces"]["source-value"],
+        "atomic_forces": af_prop["forces"]["source-value"],
         "atomic_forces_unit": af_prop["forces"]["source-unit"],
     }
     return af_dict
@@ -261,7 +261,7 @@ class Property(dict):
         ]
         # self.unique_identifier_kw = [
         #     "adsorption_energy",
-        #     "atomic_forces_00",
+        #     "atomic_forces",
         #     "atomization_energy",
         #     "cauchy_stress",
         #     "cauchy_stress_volume_normalized",
@@ -419,9 +419,8 @@ class Property(dict):
             with tempfile.NamedTemporaryFile("w") as tmp:
                 # Hack to avoid the fact that "property-name" has to be a dictionary
                 # in order for OpenKIM's check_property_definition to work
-
-                if "property-name" in dummy_dict:
-                    del dummy_dict["property-name"]
+                # if "property-name" in dummy_dict:
+                #     del dummy_dict["property-name"]
                 tmp.write(json.dumps(dummy_dict))
                 tmp.flush()
                 instance = kim_edn.loads(
@@ -494,19 +493,6 @@ class Property(dict):
                     continue
                 instance.update(pval)
 
-                # for key, val in pmap.items():
-                #     print('pmap',pmap)
-                #     pval = cls.get_property_value(
-                #         val, configuration.info, configuration.arrays
-                #     )
-                #     if pval is False:
-                #         print(
-                #             f"Property {p_info.key} not found in arrays or info for {pname}: {pmap}"  # noqa E501
-                #         )
-                #         pdef_dict.pop(pname)
-                #         continue
-                #     instance[p_info.key] = pval
-
                 # hack to get around OpenKIM requiring the property-name be a dict
                 prop_name_tmp = pdef_dict[pname].pop("property-name")
                 check_instance_optional_key_marked_required_are_present(
@@ -550,8 +536,8 @@ class Property(dict):
         row_dict["chemical_formula_hill"] = self.chemical_formula_hill
         row_dict["multiplicity"] = 1
         row_dict["dataset_id"] = self.dataset_id
-        if row_dict["atomic_forces_00"] is not None:
-            norms = [np.linalg.norm(f) for f in row_dict["atomic_forces_00"]]
+        if row_dict["atomic_forces"] is not None:
+            norms = [np.linalg.norm(f) for f in row_dict["atomic_forces"]]
             row_dict["max_force_norm"] = float(np.max(norms))
             row_dict["mean_force_norm"] = float(np.mean(norms))
         return row_dict
