@@ -233,17 +233,17 @@ quests_descriptor_pd = {
             },
         }
 
-mask_selection_pd = {
-            "property-id": "tag:staff@noreply.colabfit.org,2024-12-09:property/mask-selection",
-            "property-name": 'mask-selection',
-            "property-title": "Mask selection",
-            "property-description": "List of bools determining if atom is selected or not",
-
-            "mask-selection": { 
-                "type": "bool",
-                "has-unit": False,
-                "extent": [":"],
-                "required": True,
-                "description": "The per-atom selection",
-            },
+custom_mask_pd = {
+        'property-id': 'tag:staff@noreply.colabfit.org,2024-12-09: property/selection-mask',
+        'property-name': 'selection',
+        'property-title': 'Selection mask',
+        'property-description': 'List of bools determining if atom is selected or not',
+        'mask': {
+            'type': 'bool',
+            'has-unit': False,
+            'extent': [':'],
+            'required': True,
+            'description': 'The per-atom selection'
+            }
         }
+

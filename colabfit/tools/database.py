@@ -43,7 +43,7 @@ from colabfit.tools.configuration import AtomicConfiguration
 from colabfit.tools.configuration_set import ConfigurationSet
 from colabfit.tools.dataset import Dataset
 from colabfit.tools.property import Property
-from colabfit.tools.property_definitions import atomic_forces_pd, energy_pd, cauchy_stress_pd, quests_descriptor_pd, mask_selection_pd
+from colabfit.tools.property_definitions import atomic_forces_pd, energy_pd, cauchy_stress_pd, quests_descriptor_pd 
 from pyspark.sql.functions import udf
 from pyspark.sql.types import StringType
 from colabfit.tools.schema import (
