@@ -194,7 +194,7 @@ class Dataset:
         row_dict["nsites"] = agg_row["nsites"]
         row_dict["nperiodic_dimensions"] = agg_row["nperiodic_dimensions"]
         row_dict["dimension_types"] = agg_row["dimension_types"]
-        row_dict["elements"] = sorted(agg_row["elements"])
+        row_dict["elements"] = sorted(list(set(agg_row["elements"])))
         row_dict["nelements"] = len(row_dict["elements"])
 
         atomic_ratios_df = (
