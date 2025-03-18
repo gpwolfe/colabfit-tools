@@ -12,6 +12,7 @@ from colabfit.tools.vast.utilities import (
     _parse_unstructured_metadata,
     config_struct_hash,
     get_last_modified,
+    get_pbc_from_cell,
 )
 
 
@@ -241,9 +242,7 @@ class AtomicConfiguration(Atoms):
         co_dict["positions_00"] = self.positions.astype(float).tolist()
         co_dict["names"] = self.names
         co_dict["labels"] = self.labels
-        cell_lengths = np.linalg.norm(self.cell.array.astype(float), axis=1)
-        pbc = cell_lengths > 1e-10
-        co_dict["pbc"] = pbc.astype(bool).tolist()
+        co_dict["pbc"] = get_pbc_from_cell(self.cell)
         co_dict["last_modified"] = get_last_modified()
         co_dict["atomic_numbers"] = self.numbers.astype(int).tolist()
         co_dict["structure_hash"] = config_struct_hash(

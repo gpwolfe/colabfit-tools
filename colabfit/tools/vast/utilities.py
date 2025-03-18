@@ -130,6 +130,13 @@ def get_last_modified():
     )
 
 
+def get_pbc_from_cell(cell):
+    cell = np.array(cell, dtype=float)
+    cell_lengths = np.linalg.norm(cell, axis=1)
+    pbc = cell_lengths > 1e-10
+    return pbc.astype(bool).tolist()
+
+
 def get_spark_field_type(schema, field_name):
     for field in schema:
         if field.name == field_name:
