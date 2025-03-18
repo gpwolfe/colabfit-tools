@@ -45,11 +45,22 @@ class AtomicConfiguration(Atoms):
                 Other keyword arguments that can be passed to
                 :meth:`ase.Atoms.__init__()`
         """
-        names = info[ATOMS_NAME_FIELD]
         if "atomic_numbers" in list(kwargs.keys()):
             kwargs["numbers"] = kwargs.pop("atomic_numbers")
-
         Atoms.__init__(self, **kwargs)
+        if self.info is None:
+            if info is not None:
+                self.info = info
+        names = self.info.get(ATOMS_NAME_FIELD)
+        if names is None:
+            raise ValueError(
+                "The configuration 'info' dictionary must contain the key '_name'"
+            )
+        labels = self.info.get(ATOMS_LABELS_FIELD)
+        if labels is not None and not isinstance(labels, set):
+            if isinstance(labels, str):
+                labels = [labels]
+            self.info[ATOMS_LABELS_FIELD] = list(set(labels))
         self._array_order = np.lexsort(
             (
                 self.arrays["positions"][:, 2],
@@ -261,43 +272,7 @@ class AtomicConfiguration(Atoms):
         """
         Generates an :class:`AtomicConfiguration` from an :code:`ase.Atoms` object.
         """
-        # Workaround for bug in todict() fromdict() with constraints.
-        # Merge request: https://gitlab.com/ase/ase/-/merge_requests/2574
-        # This means kwargs need to be same as those in ASE
-        dct = atoms.todict()
-        kw = {name: dct.pop(name) for name in ["numbers", "positions", "cell", "pbc"]}
-        constraints = dct.pop("constraints", None)
-        if constraints:
-            constraints = [c.todict() for c in atoms.constraints]
-            from ase.constraints import dict2constraint
-
-            constraints = [dict2constraint(d) for d in constraints]
-        info = dct.pop("info", None)
-        for k, v in info.items():
-            if k in [ATOMS_NAME_FIELD, ATOMS_LABELS_FIELD]:
-                if not isinstance(v, set):
-                    if not isinstance(v, list):
-                        v = [v]
-                    info[k] = list(set(v))
-                else:
-                    info[k] = list(v)
-            else:
-                info[k] = v
-        config = self(
-            constraint=constraints,
-            celldisp=dct.pop("celldisp", None),
-            info=info,
-            co_md_map=co_md_map,
-            **kw,
-        )
-        natoms = len(atoms)
-        for name, arr in dct.items():
-            assert len(arr) == natoms, name
-            assert isinstance(arr, np.ndarray)
-            config.arrays[name] = arr
-        # for k, v in atoms.arrays.items():
-        #     conf.arrays[k] = v
-
+        config = self(co_md_map=co_md_map, symbols=atoms)
         return config
 
     @staticmethod
