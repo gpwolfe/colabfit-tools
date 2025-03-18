@@ -319,8 +319,11 @@ class Property(dict):
         return self._property_fields
 
     @classmethod
-    def get_property_value(cls, property_dict, info, arrays):
+    def get_property_value(cls, property_dict, configuration):
         return_val = {}
+        arrays = configuration.arrays
+        info = configuration.info
+        calc_results = configuration.calc.results
         for key, val in property_dict.items():
             if "value" in val:
                 data = val["value"]
@@ -328,6 +331,8 @@ class Property(dict):
                 data = info[val["field"]]
             elif val["field"] in arrays:
                 data = arrays[val["field"]]
+            elif val["field"] in calc_results:
+                data = calc_results[val["field"]]
             else:
                 return False
             if isinstance(data, (np.ndarray, list)):
@@ -483,9 +488,7 @@ class Property(dict):
                     pdef_dict.pop(pname)
                     continue
                 instance = instance.copy()
-                pval = cls.get_property_value(
-                    pmap, configuration.info, configuration.arrays
-                )
+                pval = cls.get_property_value(pmap, configuration)
                 if pval is False:
                     print(
                         f"Property {p_info.key} not found in arrays or info for {pname}: {pmap}"  # noqa E501
