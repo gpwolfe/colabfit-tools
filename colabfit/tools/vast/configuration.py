@@ -270,11 +270,11 @@ class AtomicConfiguration(Atoms):
         return co_dict
 
     @classmethod
-    def from_ase(self, atoms, co_md_map=None):
+    def from_ase(self, atoms, co_md_map=None, **kwargs):
         """
         Generates an :class:`AtomicConfiguration` from an :code:`ase.Atoms` object.
         """
-        config = self(co_md_map=co_md_map, symbols=atoms)
+        config = self(co_md_map=co_md_map, symbols=atoms, **kwargs)
         return config
 
     @staticmethod
