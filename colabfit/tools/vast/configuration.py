@@ -48,9 +48,12 @@ class AtomicConfiguration(Atoms):
         if "atomic_numbers" in list(kwargs.keys()):
             kwargs["numbers"] = kwargs.pop("atomic_numbers")
         Atoms.__init__(self, **kwargs)
-        if self.info is None:
-            if info is not None:
-                self.info = info
+        if info is not None:
+            self.info.update(info)
+        if self.info == {}:
+            raise ValueError(
+                "Configuration should have '.info' dict attribute. Pass dict to generator function."  # noqa E501
+            )
         names = self.info.get(ATOMS_NAME_FIELD)
         if names is None:
             raise ValueError(
@@ -83,7 +86,6 @@ class AtomicConfiguration(Atoms):
         ]
         self.unique_identifier_kw.extend([f"positions_{i:02d}" for i in range(1, 20)])
         self.struct_identifier_kw.extend([f"positions_{i:02d}" for i in range(1, 20)])
-        self.info = info
         self.metadata = self.set_metadata(co_md_map)
         if isinstance(names, str):
             self.names = [names]
