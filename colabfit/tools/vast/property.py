@@ -332,7 +332,10 @@ class Property(dict):
             elif val["field"] in arrays:
                 data = arrays[val["field"]]
             elif val["field"] in calc_results:
-                data = calc_results[val["field"]]
+                if val["field"] == "stress":
+                    data = configuration.get_stress(voigt=False)
+                else:
+                    data = calc_results[val["field"]]
             else:
                 return False
             if isinstance(data, (np.ndarray, list)):
