@@ -52,7 +52,7 @@ class ConfigurationSet:
         self.name = name
         self.description = description
         self.dataset_id = dataset_id
-        # self.ordered = ordered
+        self.ordered = ordered
         self.row_dict = self.to_row_dict(config_df)
         self.id = f"CS_{self.name}_{self.dataset_id}"
         self._hash = hash(self)
@@ -72,14 +72,14 @@ class ConfigurationSet:
             sf.sum("nsites").alias("nsites"),
             sf.collect_set("nperiodic_dimensions").alias("nperiodic_dimensions"),
             sf.collect_set("dimension_types").alias("dimension_types"),
-            sf.flatten(sf.collect_set("elements")).alias("elements"),
+            sf.array_distinct(sf.flatten(sf.collect_set("elements"))).alias("elements"),
         )
         agg_row = agg_df.collect()[0]
         row_dict["nconfigurations"] = agg_row["nconfigurations"]
         row_dict["nsites"] = agg_row["nsites"]
         row_dict["nperiodic_dimensions"] = agg_row["nperiodic_dimensions"]
         row_dict["dimension_types"] = agg_row["dimension_types"]
-        row_dict["elements"] = sorted(agg_row["elements"])
+        row_dict["elements"] = sorted(list(set(agg_row["elements"])))
         row_dict["nelements"] = len(row_dict["elements"])
         row_dict["last_modified"] = get_last_modified()
         atomic_ratios_df = (

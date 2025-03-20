@@ -131,7 +131,6 @@ class Dataset:
 
     def to_row_dict(self, config_df, prop_df):
         """"""
-
         row_dict = _empty_dict_from_schema(dataset_schema)
         row_dict["last_modified"] = get_last_modified()
         row_dict["nconfiguration_sets"] = len(self.configuration_set_ids)
@@ -146,6 +145,7 @@ class Dataset:
         )
 
         prop_df = prop_df.select(
+            "id",
             "atomization_energy",
             "atomic_forces_00",
             "adsorption_energy",
@@ -177,28 +177,33 @@ class Dataset:
             ]
         )
         config_df.cache()
-        row_dict["nconfigurations"] = config_df.count()
-        row_dict["nsites"] = config_df.agg({"nsites": "sum"}).first()[0]
-        elements_df = config_df.select(
-            sf.explode("elements").alias("exploded_elements")
-        ).distinct()
-        row_dict["elements"] = sorted(
-            [row.exploded_elements for row in elements_df.collect()]
+        agg_df = config_df.agg(
+            sf.count_distinct("id").alias("nconfigurations"),
+            sf.sum("nsites").alias("nsites"),
+            sf.collect_set("nperiodic_dimensions").alias("nperiodic_dimensions"),
+            sf.collect_set("dimension_types").alias("dimension_types"),
+            sf.flatten(sf.collect_set("elements")).alias("elements"),
         )
+        agg_row = agg_df.collect()[0]
+        row_dict["nconfigurations"] = agg_row["nconfigurations"]
+        row_dict["nsites"] = agg_row["nsites"]
+        row_dict["nperiodic_dimensions"] = agg_row["nperiodic_dimensions"]
+        row_dict["dimension_types"] = agg_row["dimension_types"]
+        row_dict["elements"] = sorted(list(set(agg_row["elements"])))
         row_dict["nelements"] = len(row_dict["elements"])
 
-        element_counts = (
-            config_df.select(sf.explode("atomic_numbers").alias("single_element"))
+        atomic_ratios_df = (
+            config_df.select("atomic_numbers")
+            .withColumn("single_element", sf.explode("atomic_numbers"))
             .groupBy("single_element")
-            .agg(sf.count("*").alias("count"))
+            .agg(sf.count("single_element").alias("count"))
         )
-        total_atoms = element_counts.agg(sf.sum("count")).first()[0]
-        atomic_ratios_df = element_counts.withColumn(
-            "ratio", sf.col("count") / sf.lit(total_atoms)
+        total_elements = atomic_ratios_df.agg(sf.sum("count")).collect()[0][0]
+        atomic_ratios_df = atomic_ratios_df.withColumn(
+            "ratio", sf.col("count") / total_elements
         )
-
-        print(total_atoms, row_dict["nsites"])
-        assert total_atoms == row_dict["nsites"]
+        print(total_elements, row_dict["nsites"])
+        assert total_elements == row_dict["nsites"]
 
         element_map_expr = sf.create_map(
             [
@@ -207,6 +212,7 @@ class Dataset:
                 for k in pair
             ]
         )
+
         atomic_ratios_coll = (
             atomic_ratios_df.withColumn(
                 "element", element_map_expr[sf.col("single_element")]
@@ -217,42 +223,25 @@ class Dataset:
         row_dict["total_elements_ratios"] = [
             x["ratio"] for x in sorted(atomic_ratios_coll, key=lambda x: x["element"])
         ]
-
-        row_dict["nperiodic_dimensions"] = config_df.agg(
-            sf.collect_set("nperiodic_dimensions")
-        ).collect()[0][0]
-        row_dict["dimension_types"] = config_df.agg(
-            sf.collect_set("dimension_types")
-        ).collect()[0][0]
         config_df.unpersist()
 
-        prop_df.cache()
-        nproperty_objects = prop_df.count()
-        row_dict["nproperty_objects"] = nproperty_objects
-        for prop in [
-            "atomization_energy",
-            "adsorption_energy",
-            "electronic_band_gap",
-            "cauchy_stress",
-            "formation_energy",
-            "energy",
-        ]:
-            row_dict[f"{prop}_count"] = (
-                prop_df.select(prop).where(f"{prop} is not null").count()
-            )
-        row_dict["atomic_forces_count"] = (
-            prop_df.select("atomic_forces_00")
-            .filter(sf.col("atomic_forces_00") != "[]")
-            .count()
+        count_df = prop_df.agg(
+            sf.count_distinct("id").alias("nproperty_objects"),
+            sf.count("atomization_energy").alias("atomization_energy_count"),
+            sf.count("adsorption_energy").alias("adsorption_energy_count"),
+            sf.count("electronic_band_gap").alias("electronic_band_gap_count"),
+            sf.count("cauchy_stress").alias("cauchy_stress_count"),
+            sf.count("formation_energy").alias("formation_energy_count"),
+            sf.count("energy").alias("energy_count"),
+            sf.variance("energy").alias("energy_variance"),
+            sf.mean("energy").alias("energy_mean"),
+            sf.count_if(
+                (sf.col("atomic_forces_00") != "[]")
+                & (sf.col("atomic_forces_00").isNotNull())
+            ).alias("atomic_forces_count"),
         )
-        prop = "energy"
-        row_dict[f"{prop}_variance"] = (
-            prop_df.select(prop).where(f"{prop} is not null").agg(sf.variance(prop))
-        ).first()[0]
-        row_dict[f"{prop}_mean"] = (
-            prop_df.select(prop).where(f"{prop} is not null").agg(sf.mean(prop))
-        ).first()[0]
-        prop_df.unpersist()
+        count_row = count_df.collect()[0].asDict()
+        row_dict.update(count_row)
         row_dict["authors"] = self.authors
         row_dict["description"] = self.description
         row_dict["license"] = self.data_license
