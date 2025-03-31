@@ -1,5 +1,6 @@
 import itertools
 import json
+import logging
 import os
 import tempfile
 import warnings
@@ -25,6 +26,8 @@ from colabfit.tools.vast.utilities import (
 )
 
 from kim_property.create import KIM_PROPERTIES
+
+logger = logging.getLogger(__name__)
 
 EDN_KEY_MAP = {
     "energy": "unrelaxed-potential-energy",
@@ -482,10 +485,10 @@ class Property(dict):
             else:
                 p_info = MAIN_KEY_MAP.get(pname, None)
                 if p_info is None:
-                    print(f"property {pname} not found in MAIN_KEY_MAP")
+                    logger.warning(f"property {pname} not found in MAIN_KEY_MAP")
                     continue
                 if p_info.key not in pmap:
-                    print(
+                    logger.warning(
                         f"Property {p_info.key} not found in pmap for {pname}: {pmap}"  # noqa E501
                     )
                     pdef_dict.pop(pname)
@@ -493,7 +496,7 @@ class Property(dict):
                 instance = instance.copy()
                 pval = cls.get_property_value(pmap, configuration)
                 if pval is False:
-                    print(
+                    logger.warning(
                         f"Property {p_info.key} not found in arrays or info for {pname}: {pmap}"  # noqa E501
                     )
                     pdef_dict.pop(pname)
@@ -572,7 +575,7 @@ class Property(dict):
                 continue
             p_info = MAIN_KEY_MAP[prop_name]
             if p_info.key not in prop_dict:
-                print(f"Property {p_info.key} not found in {prop_name}")
+                logger.warning(f"Property {p_info.key} not found in {prop_name}")
                 continue
             units = prop_dict[p_info.key]["source-unit"]
             if p_info.dtype == list:

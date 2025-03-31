@@ -1,4 +1,5 @@
 import itertools
+import logging
 import string
 from ast import literal_eval
 from functools import partial
@@ -57,6 +58,8 @@ from colabfit.tools.vast.utilities import (
     str_to_arrayof_int,
     str_to_arrayof_str,
 )
+
+logger = logging.getLogger(__name__)
 
 VAST_BUCKET_DIR = "colabfit-data"
 VAST_METADATA_DIR = "data/MD"
@@ -160,7 +163,7 @@ class VastDataLoader:
 
     def check_unique_ids(self, table_name: str, df):
         if not self.spark.catalog.tableExists(table_name):
-            print(f"Table {table_name} does not yet exist.")
+            logger.info(f"Table {table_name} does not yet exist.")
             return True
         ids = [x["id"] for x in df.select("id").collect()]
         bucket_name, schema_name, table_n = self._get_table_split(table_name)
@@ -174,7 +177,7 @@ class VastDataLoader:
                 )
                 for batch in rec_batch_reader:
                     if batch.num_rows > 0:
-                        print(f"Duplicate IDs found in table {table_name}")
+                        logger.info(f"Duplicate IDs found in table {table_name}")
                         return False
         return True
 
@@ -198,7 +201,7 @@ class VastDataLoader:
             field = field.with_nullable(True)
         bucket_name, schema_name, table_n = self._get_table_split(table_name)
         if not self.spark.catalog.tableExists(table_name):
-            print(f"Creating table {table_name}")
+            logger.info(f"Creating table {table_name}")
             with self.session.transaction() as tx:
                 schema = tx.bucket(bucket_name).schema(schema_name)
                 schema.create_table(table_n, arrow_schema)
@@ -227,11 +230,11 @@ class VastDataLoader:
                         spark_df.filter(sf.col("id").isin(existing_ids))
                     )
                     if len(new_ids) == 0:
-                        print(f"No new IDs to insert into table {table_name}")
+                        logger.info(f"No new IDs to insert into table {table_name}")
                         continue
                     write_rows = spark_df.filter(sf.col("id").isin(new_ids))
                 elif rec_batch.num_rows == 0:
-                    print(f"No matching IDs found in table {table_name}")
+                    logger.info(f"No matching IDs found in table {table_name}")
                     new_ids = id_batch
                     write_rows = spark_df
                 write_rows = self.write_metadata(write_rows)
@@ -258,7 +261,7 @@ class VastDataLoader:
                     len_batch = rec_batch.num_rows
                     table.insert(rec_batch)
                     total_rows += len_batch
-                print(f"Inserted {total_rows} rows into table {table_name}")
+                logger.info(f"Inserted {total_rows} rows into table {table_name}")
         if len(existing_df_array) > 1:
             existing_df = existing_df_array[0].union(*existing_df_array[1:])
         elif len(existing_df_array) == 1:
@@ -301,7 +304,7 @@ class VastDataLoader:
         for field in arrow_schema:
             field = field.with_nullable(True)
         if not self.spark.catalog.tableExists(table_name):
-            print(f"Creating table {table_name}")
+            logger.info(f"Creating table {table_name}")
             with self.session.transaction() as tx:
                 schema = tx.bucket(bucket_name).schema(schema_name)
                 schema.create_table(table_n, arrow_schema)
@@ -320,12 +323,12 @@ class VastDataLoader:
                     )
                     id_rec_batch = id_rec_batch.read_all()
                     if id_rec_batch.num_rows > 0:
-                        print(f"Duplicate IDs found in table {table_name}")
+                        logger.info(f"Duplicate IDs found in table {table_name}")
                         raise ValueError("Duplicate IDs found in table. Not writing.")
                 len_batch = rec_batch.num_rows
                 table.insert(rec_batch)
                 total_rows += len_batch
-        print(f"Inserted {total_rows} rows into table {table_name}")
+        logger.info(f"Inserted {total_rows} rows into table {table_name}")
 
     def write_metadata(self, df):
         """Writes metadata to files using boto3 for VastDB
@@ -347,7 +350,7 @@ class VastDataLoader:
         distinct_metadata.foreachPartition(
             lambda partition: write_md_partition(partition, config)
         )
-        print(f"Time to write metadata: {time() - beg}")
+        logger.info(f"Time to write metadata: {time() - beg}")
         df = df.drop("metadata")
         # file_base = f"/vdev/{VAST_BUCKET_DIR}/{VAST_METADATA_DIR}/"
         file_base = f"{self.metadata_dir}/"
@@ -508,7 +511,7 @@ class VastDataLoader:
                 table.update(rows=update_table, columns=update_cols)
             n_updated += len(id_batch)
         assert n_updated == len(ids)
-        print(f"Updated {n_updated} rows in {table_name}")
+        logger.info(f"Updated {n_updated} rows in {table_name}")
         return
 
     def read_table(
@@ -586,7 +589,7 @@ class VastDataLoader:
         """Use to return multiplicity of POs for a given dataset to zero"""
         table_exists = self.spark.catalog.tableExists(self.prop_object_table)
         if not table_exists:
-            print(f"Table {self.prop_object_table} does not exist")
+            logger.info(f"Table {self.prop_object_table} does not exist")
             return
         spark_schema = StructType(
             [
@@ -611,7 +614,7 @@ class VastDataLoader:
                     rec_batch.to_struct_array().to_pandas(), schema=spark_schema
                 )
                 df = df.withColumn("multiplicity", sf.lit(0))
-                print(f"Zeroed {df.count()} property objects")
+                logger.info(f"Zeroed {df.count()} property objects")
                 update_time = get_last_modified()
                 df = df.withColumn(
                     "last_modified", sf.lit(update_time).cast("timestamp")
@@ -643,7 +646,7 @@ class VastDataLoader:
             )
             rec_batch = rec_batch_reader.read_all()
             if rec_batch.num_rows == 0:
-                print(f"No records found for given query {predicate}")
+                logger.info(f"No records found for given query {predicate}")
                 return self.spark.createDataFrame([], schema=schema)
             spark_df = self.spark.createDataFrame(
                 rec_batch.to_struct_array().to_pandas(), schema=schema
@@ -665,14 +668,14 @@ class VastDataLoader:
             - Prints message and returns None if no records found for the given ID.
         """
         if not self.spark.catalog.tableExists(self.co_cs_map_table):
-            print(f"Table {self.co_cs_map_table} does not exist")
+            logger.info(f"Table {self.co_cs_map_table} does not exist")
             return None
         predicate = _.configuration_set_id == cs_id
         co_cs_map = self.simple_sdk_query(
             self.co_cs_map_table, predicate, co_cs_map_schema
         )
         if co_cs_map.count() == 0:
-            print(f"No records found for given configuration set id {cs_id}")
+            logger.info(f"No records found for given configuration set id {cs_id}")
             return None
         return co_cs_map
 
@@ -867,7 +870,7 @@ class DataManager:
         self.standardize_energy = standardize_energy
         if self.dataset_id is None:
             self.dataset_id = generate_ds_id()
-        print("Dataset ID:", self.dataset_id)
+        logger.info("Dataset ID:", self.dataset_id)
 
     @staticmethod
     def _gather_co_po_rows(
@@ -1009,7 +1012,7 @@ class DataManager:
     def check_existing_tables(self, loader, batching_ingest=False):
         """Check tables for conficts before loading data."""
         if loader.spark.catalog.tableExists(loader.prop_object_table):
-            print(f"table {loader.prop_object_table} exists")
+            logger.info(f"table {loader.prop_object_table} exists")
             if batching_ingest is False:
                 pos_with_mult = loader.read_table(loader.prop_object_table)
                 pos_with_mult = pos_with_mult.filter(
@@ -1049,7 +1052,7 @@ class DataManager:
                 co_count = co_df.count()
                 co_count_distinct = co_df.select("id").distinct().count()
                 if co_count_distinct < co_count:
-                    print(
+                    logger.info(
                         f"{co_count - co_count_distinct} duplicates found in CO dataframe"  # noqa E501
                     )
                     co_df = self.deduplicate_co_df(co_df)
@@ -1057,7 +1060,7 @@ class DataManager:
                 po_count = po_df.count()
                 po_count_distinct = po_df.select("id").distinct().count()
                 if po_count_distinct < po_count:
-                    print(
+                    logger.info(
                         f"{po_count - po_count_distinct} duplicates found in PO dataframe"  # noqa
                     )
                     po_df = self.deduplicate_po_df(po_df)
@@ -1109,9 +1112,8 @@ class DataManager:
         for i, (names_match, label_match, cs_name, cs_desc) in tqdm(
             enumerate(name_label_match), desc="Creating Configuration Sets"
         ):
-            print(
-                f"names match: {names_match}, label: {label_match}, "
-                f"cs_name: {cs_name}, cs_desc: {cs_desc}"
+            logger.info(
+                f"names match: {names_match}, label: {label_match}, cs_name: {cs_name}, cs_desc: {cs_desc}"
             )
             config_set_query_df = loader.config_set_query(
                 dataset_id=dataset_id,
@@ -1146,9 +1148,8 @@ class DataManager:
             prelim_cs_id = f"CS_{cs_name}_{self.dataset_id}"
             co_cs_df = loader.get_co_cs_mapping(prelim_cs_id)
             if co_cs_df is not None:
-                print(
-                    f"Configuration Set {cs_name} already exists.\nRemove rows matching "  # noqa E501
-                    f"'configuration_set_id == {prelim_cs_id} from table {loader.co_cs_map_table} to recreate.\n"  # noqa E501
+                logger.error(
+                    f"Configuration Set {cs_name} already exists.\nRemove rows matching 'configuration_set_id == {prelim_cs_id}' from table {loader.co_cs_map_table} to recreate.\n"  # noqa E501
                 )
                 continue
             config_set = ConfigurationSet(
@@ -1161,7 +1162,7 @@ class DataManager:
             if co_cs_write_df is None:
                 co_cs_write_df = co_cs_df
             elif co_cs_write_df.count() > 10000:
-                print("Sending CO-CS map batch to write table")
+                logger.info("Sending CO-CS map batch to write table")
                 loader.write_table(
                     co_cs_write_df, loader.co_cs_map_table, check_unique=False
                 )
@@ -1170,7 +1171,7 @@ class DataManager:
                 co_cs_write_df = co_cs_write_df.union(co_cs_df)
             config_set_rows.append(config_set.row_dict)
             t_end = time() - t
-            print(f"Time to create CS: {t_end}")
+            logger.info(f"Time to create CS: {t_end}")
         if co_cs_write_df.count() > 0 and co_cs_write_df is not None:
             loader.write_table(
                 co_cs_write_df, loader.co_cs_map_table, check_unique=False
@@ -1328,7 +1329,7 @@ class S3FileManager:
 def generate_ds_id():
     # Maybe check to see whether the DS ID already exists?
     ds_id = ID_FORMAT_STRING.format("DS", generate_string(), 0)
-    print("Generated new DS ID:", ds_id)
+    logger.info("Generated new DS ID:", ds_id)
     return ds_id
 
 

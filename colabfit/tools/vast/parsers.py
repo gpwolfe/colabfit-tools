@@ -286,7 +286,6 @@ def vasp_outcar_reader(symbols, fp):
 
             else:
                 continue
-                # print("something went wrong")
 
 
 def vasp_get_kpoints(fp):

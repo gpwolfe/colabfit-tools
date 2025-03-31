@@ -1,4 +1,4 @@
-import warnings
+import logging
 
 import pyspark.sql.functions as sf
 from unidecode import unidecode
@@ -13,6 +13,8 @@ from colabfit.tools.vast.utilities import (
     str_to_arrayof_int,
     str_to_arrayof_str,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class Dataset:
@@ -121,13 +123,13 @@ class Dataset:
         )
         if len(id_prefix) > (MAX_STRING_LENGTH - len(dataset_id) - 2):
             id_prefix = id_prefix[: MAX_STRING_LENGTH - len(dataset_id) - 2]
-            warnings.warn(f"ID prefix is too long. Clipping to {id_prefix}")
+            logger.warning(f"ID prefix is too long. Clipping to {id_prefix}")
         extended_id = f"{id_prefix}__{dataset_id}"
         self.row_dict["extended_id"] = extended_id
         self._hash = _hash(self.row_dict, ["extended_id"])
         self.row_dict["hash"] = str(self._hash)
         self.row_dict["labels"] = labels
-        print(self.row_dict)
+        logger.info(self.row_dict)
 
     def to_row_dict(self, config_df, prop_df):
         """"""
@@ -202,7 +204,7 @@ class Dataset:
         atomic_ratios_df = atomic_ratios_df.withColumn(
             "ratio", sf.col("count") / total_elements
         )
-        print(total_elements, row_dict["nsites"])
+        logger.info(f'{total_elements} {row_dict["nsites"]}')
         assert total_elements == row_dict["nsites"]
 
         element_map_expr = sf.create_map(

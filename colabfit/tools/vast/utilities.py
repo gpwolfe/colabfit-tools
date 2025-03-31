@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import sys
 from ast import literal_eval
@@ -20,6 +21,8 @@ from pyspark.sql.types import (
     ArrayType,
     TimestampType,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _format_for_hash(v):
@@ -339,7 +342,7 @@ def split_long_string_cols(df, column_name: str, max_string_length: int):
             ]
         )
         return df
-    print(f"Column split: {column_name}")
+    logger.info(f"Column split: {column_name}")
     all_columns = [column_name] + overflow_columns
     tmp_columns = [f"{col_name}_tmp" for col_name in all_columns]
     df = df.withColumn("total_length", sf.length(sf.col(column_name)))
@@ -371,7 +374,7 @@ def combine_cols(df, col_name_base: str):
     columns = [f"{col_name_base}_{i:02}" for i in range(20)]
     if not all([col in df.columns for col in columns]):
         raise ValueError("Overflow columns not found in target DataFrame schema")
-    print(f"Column combined: {col_name_base}")
+    logger.info(f"Column combined: {col_name_base}")
     df = df.withColumn(
         col_name_base,
         sf.concat_ws("", *[sf.col(col) for col in columns]),

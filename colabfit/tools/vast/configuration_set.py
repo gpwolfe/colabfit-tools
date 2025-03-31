@@ -1,5 +1,6 @@
 from collections import namedtuple
 from hashlib import sha512
+import logging
 
 from pyspark.sql import functions as sf
 
@@ -9,6 +10,8 @@ from colabfit.tools.vast.utilities import (
     _empty_dict_from_schema,
     get_last_modified,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class ConfigurationSet:
@@ -92,7 +95,7 @@ class ConfigurationSet:
         atomic_ratios_df = atomic_ratios_df.withColumn(
             "ratio", sf.col("count") / total_elements
         )
-        print(total_elements, row_dict["nsites"])
+        logger.info(f"{total_elements} {row_dict['nsites']}")
         assert total_elements == row_dict["nsites"]
         element_map_expr = sf.create_map(
             [
