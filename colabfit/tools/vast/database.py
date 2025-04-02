@@ -870,7 +870,7 @@ class DataManager:
         self.standardize_energy = standardize_energy
         if self.dataset_id is None:
             self.dataset_id = generate_ds_id()
-        logger.info("Dataset ID:", self.dataset_id)
+        logger.info(f"Dataset ID: {self.dataset_id}")
 
     @staticmethod
     def _gather_co_po_rows(
