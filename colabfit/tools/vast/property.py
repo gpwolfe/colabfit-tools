@@ -326,7 +326,10 @@ class Property(dict):
         return_val = {}
         arrays = configuration.arrays
         info = configuration.info
-        calc_results = configuration.calc.results
+        if configuration.calc is not None:
+            calc_results = configuration.calc.results
+        else:
+            calc_results = {}
         for key, val in property_dict.items():
             if "value" in val:
                 data = val["value"]
