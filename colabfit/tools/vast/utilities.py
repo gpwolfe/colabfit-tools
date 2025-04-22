@@ -52,15 +52,13 @@ def _format_for_hash(v):
 def _hash(row, identifying_key_list, include_keys_in_hash=False):
     identifying_key_list = sorted(identifying_key_list)
     identifiers = [row[i] for i in identifying_key_list]
-    # sort_for_hash = ["positions", "atomic_forces"]
     _hash = sha512()
     for k, v in zip(identifying_key_list, identifiers):
         if v is None or v == "[]":
             continue
-        else:
-            if include_keys_in_hash:
-                _hash.update(bytes(_format_for_hash(k)))
-            _hash.update(bytes(_format_for_hash(v)))
+        if include_keys_in_hash:
+            _hash.update(_format_for_hash(k))
+        _hash.update(_format_for_hash(v))
     return int(_hash.hexdigest(), 16)
 
 
