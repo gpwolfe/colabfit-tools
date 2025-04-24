@@ -464,13 +464,12 @@ class VastDataLoader:
                 table = tx.bucket(bucket_name).schema(schema_name).table(table_n)
                 rec_batch = table.select(
                     predicate=table["id"].isin(id_batch),
-                    columns=update_cols + ["id"],
+                    columns=cols + ["id"],
                     internal_row_id=True,
                 )
                 rec_batch = rec_batch.read_all()
-                duplicate_df = self.spark.createDataFrame(
-                    rec_batch.to_struct_array().to_pandas(), schema=read_schema
-                )
+            rec_batch_pd = rec_batch.to_struct_array().to_pandas()
+            duplicate_df = self.spark.createDataFrame(rec_batch_pd, schema=read_schema)
             for col_name in arr_cols:
                 unstring_udf = sf.udf(unstring_df_val, unstr_col_types[col_name])
                 duplicate_df = duplicate_df.withColumn(
