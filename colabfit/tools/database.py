@@ -1489,6 +1489,10 @@ class DataManager:
 
     def insert_property_definition(self, property_dict):
         # TODO: try except that property_dict must be jsonable
+
+        # check that property dict has correct form
+        for key in ["property-id", "property-name", "property-title", "property-description"]:
+            assert key in property_dict, f"{key} must be a part of the property definition format"
         json_pd = json.dumps(property_dict) 
         last_modified = dateutil.parser.parse(
             datetime.datetime.now(tz=datetime.timezone.utc).strftime(
