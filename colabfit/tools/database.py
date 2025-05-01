@@ -2049,7 +2049,7 @@ class DataManager:
         ds_df = loader.spark.createDataFrame([ds.spark_row], schema=dataset_df_schema)
         loader.write_table(ds_df, loader.dataset_table)
     
-    def delete_dataset(self, dataset_id):
+    def delete_dataset(self, dataset_id, delete_children=False):
         # check if user matches original uploader
         sql = """
             SELECT uploader
@@ -2072,6 +2072,26 @@ class DataManager:
             with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password) as conn:
                 with conn.cursor() as curs:
                     curs.execute(sql, (dataset_id,))
+            if delete_children:
+                sql1 = '''
+                    DELETE FROM property_objects
+                    WHERE dataset_id = %s;
+                    '''
+                sql2 = '''
+                    DELETE FROM configurations
+                    WHERE dataset_ids = ARRAY[%s]::varchar[];
+                    '''
+                sql3 = '''
+                    UPDATE configurations
+                    SET dataset_ids = array_remove(dataset_ids, %s)
+                    WHERE dataset_ids @> ARRAY[%s]::varchar[]  
+                    AND cardinality(dataset_ids) > 1;
+                '''
+                with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password) as conn:
+                    with conn.cursor() as curs:
+                        curs.execute(sql1, (dataset_id,))
+                        curs.execute(sql2, (dataset_id,))
+                        curs.execute(sql3, (dataset_id, dataset_id))
         else:
             raise Exception(f'Cannot delete dataset. User must match the original uploader, {uploader}.')
 
