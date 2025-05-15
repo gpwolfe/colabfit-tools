@@ -11,6 +11,7 @@ from multiprocessing import Pool
 from pathlib import Path
 from time import time
 from types import GeneratorType
+from typing import List
 
 import boto3
 import dateutil.parser
@@ -1294,8 +1295,29 @@ class DataManager:
                     property_object_schema,
                 )
 
-    def load_data_to_pg_in_batches_no_spark(self, configs, dataset_id=None, config_table=None, prop_object_table=None, prop_map=None, strict=False):
-        """Load data to PostgreSQL in batches."""
+    def load_data_to_pg_in_batches_no_spark(
+        self, 
+        configs, 
+        dataset_id=None, 
+        config_table=None, 
+        prop_object_table=None, 
+        prop_map=None, 
+        parameters: dict=None,
+        strict=False
+    ):
+        """
+        Load data to PostgreSQL in batches.
+        
+        :param configs:
+        :param datset_id:
+        :param config_table:
+        :param prop_object_table:
+        :param prop_map:
+        :param parameters: Dictionary containing two nested dictionaries called
+            `universal` and `code` to represent universal values in the 
+            database and code specific inputs for the dataset.
+        :param strict:
+        """
 
         co_po_rows = self.gather_co_po_in_batches(configs, dataset_id, prop_map, strict)
         for co_po_batch in tqdm(
@@ -1363,6 +1385,30 @@ class DataManager:
                 with conn.cursor() as curs:
                     curs.executemany(sql_co,co_values)
                     curs.executemany(sql_po,po_values)
+
+        if parameters:
+            universal = parameters.get('universal', {})
+            code = parameters.get('code', {})
+            code = json.dumps(code)
+
+            sql_code = f"""
+                INSERT INTO dataset_code_specific_parameters (dataset_id, code_specific_inputs)
+                VALUES (%s, %s);
+                """
+            sql_universal = f"""
+                INSERT INTO dataset_universal_parameters (dataset_id, parameter_name, parameter_value)
+                VALUES (%s, %s, %s)
+                """
+            
+            family_id = dataset_id.split('_')[1]
+            universal_values = []
+            for key, value in universal.items():
+                universal_values.append([family_id, key, value])
+
+            with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password) as conn:
+                with conn.cursor() as curs:
+                    curs.execute(sql_code, [family_id, code])
+                    curs.executemany(sql_universal, universal_values)
 
     def create_pg_ds_table(self):
         sql = """
@@ -1561,6 +1607,7 @@ class DataManager:
         config_table=None,
         prop_object_table=None,
         prop_map=None,
+        parameters: dict=None,
         strict=False,
         ):
 
@@ -1577,7 +1624,15 @@ class DataManager:
             else:
                 raise Exception("Configs must be an instance of either ase.Atoms or AtomicConfiguration")
 
-        self.load_data_to_pg_in_batches_no_spark(converted_configs, dataset_id, config_table, prop_object_table, prop_map, strict)
+        self.load_data_to_pg_in_batches_no_spark(
+            converted_configs, 
+            dataset_id, 
+            config_table, 
+            prop_object_table, 
+            prop_map,
+            parameters,
+            strict
+        )
         self.create_dataset_pg_no_spark(
             name,
             dataset_id,
@@ -1714,7 +1769,30 @@ class DataManager:
                 curs.execute(sql)
 
 
-    def update_dataset_pg_no_spark(self, configs, dataset_id, prop_map, strict=False):
+    def update_dataset_pg_no_spark(
+        self, 
+        configs: List[Atoms], 
+        dataset_id: str, 
+        parameters: dict,
+        prop_map: dict, 
+        strict=False
+    ):
+        # Get family id
+        family = dataset_id.split('_')[1]
+        # Check if the provided parameters match with the stored values.
+        sql_param = f"""SELECT code_specific_inputs 
+FROM dataset_code_specific_parameters 
+WHERE dataset_id = '{family}';
+"""
+        params = self.general_query(sql_param)
+        params = params[0]['code_specific_parameters']
+        code = parameters.get('code', None)
+        if params != code:
+            raise ValueError(
+                f"The provided parameters['code'] does not match what is "
+                f"stored in the database. All data being uploaded must have "
+                f"matching input parameters."
+            )
         # convert to CF AtomicConfiguration if not already
         converted_configs = []
         for c in configs:
@@ -1725,7 +1803,6 @@ class DataManager:
             else:
                 raise Exception("Configs must be an instance of either ase.Atoms or AtomicConfiguration")
         # update dataset_id
-        family = dataset_id.split('_')[1]
         q = f"SELECT id FROM datasets where id LIKE '%{family}%'"
         res = self.general_query(q)
         largest_version = sorted([r['id'].split('_')[-1] for r in res])[-1]
