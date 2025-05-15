@@ -787,17 +787,8 @@ class VastDataLoader:
             "software",
         ]
         spark_dict = spark_row.asDict()
-        if spark_dict["atomic_forces_01"] is None:
-            spark_dict["atomic_forces"] = literal_eval(spark_dict["atomic_forces_00"])
-        else:
-            spark_dict["atomic_forces"] = list(
-                itertools.chain(
-                    *[
-                        literal_eval(spark_dict[f"atomic_forces_{i:02}"])
-                        for i in range(1, 19)
-                    ]
-                )
-            )
+        spark_dict["atomic_forces"] = literal_eval(spark_dict["atomic_forces"])
+
         if spark_dict["cauchy_stress"] is not None:
             spark_dict["cauchy_stress"] = literal_eval(spark_dict["cauchy_stress"])
         spark_dict["last_modified"] = get_last_modified()
@@ -817,17 +808,7 @@ class VastDataLoader:
         more of the columns corresponding to hash_keys.
         """
         spark_dict = spark_row.asDict()
-        if spark_dict["positions_01"] is None:
-            spark_dict["positions"] = literal_eval(spark_dict["positions_00"])
-        else:
-            spark_dict["positions"] = list(
-                itertools.chain(
-                    *[
-                        literal_eval(spark_dict[f"positions_{i:02}"])
-                        for i in range(1, 19)
-                    ]
-                )
-            )
+        spark_dict["positions"] = literal_eval(spark_dict["positions"])
         spark_dict["last_modified"] = get_last_modified()
         spark_dict["hash"] = _hash(spark_dict, hash_keys, include_keys_in_hash=False)
         return spark_dict["hash"]
@@ -1066,7 +1047,7 @@ class DataManager:
                 co_existing_row_df = loader.write_table_first(
                     co_df,
                     loader.config_table,
-                    check_length_col="positions_00",
+                    # check_length_col="positions",
                 )
                 if co_existing_row_df is not None:
                     loader.update_existing_co_po_rows(
@@ -1081,7 +1062,7 @@ class DataManager:
                 po_existing_row_df = loader.write_table_first(
                     po_df,
                     loader.prop_object_table,
-                    check_length_col="atomic_forces_00",
+                    # check_length_col="atomic_forces",
                 )
                 if po_existing_row_df is not None:
                     loader.update_existing_co_po_rows(

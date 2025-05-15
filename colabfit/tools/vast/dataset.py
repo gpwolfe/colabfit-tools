@@ -149,7 +149,7 @@ class Dataset:
         prop_df = prop_df.select(
             "id",
             "atomization_energy",
-            "atomic_forces_00",
+            "atomic_forces",
             "adsorption_energy",
             "electronic_band_gap",
             "cauchy_stress",
@@ -233,13 +233,13 @@ class Dataset:
             sf.count("adsorption_energy").alias("adsorption_energy_count"),
             sf.count("electronic_band_gap").alias("electronic_band_gap_count"),
             sf.count("cauchy_stress").alias("cauchy_stress_count"),
+            sf.count("energy_above_hull").alias("energy_above_hull_count"),
             sf.count("formation_energy").alias("formation_energy_count"),
             sf.count("energy").alias("energy_count"),
             sf.variance("energy").alias("energy_variance"),
             sf.mean("energy").alias("energy_mean"),
             sf.count_if(
-                (sf.col("atomic_forces_00") != "[]")
-                & (sf.col("atomic_forces_00").isNotNull())
+                (sf.col("atomic_forces") != "[]") & (sf.col("atomic_forces").isNotNull())
             ).alias("atomic_forces_count"),
         )
         count_row = count_df.collect()[0].asDict()
