@@ -256,6 +256,9 @@ class AtomicConfiguration(Atoms):
         # This means kwargs need to be same as those in ASE
         dct = atoms.todict()
         kw = {name: dct.pop(name) for name in ["numbers", "positions", "cell", "pbc"]}
+        #  Round positions (and maybe cell) to some decimal place so that configurations hash the same
+        kw['positions'] = np.round(kw['positions'],8)
+        kw['cell'] = np.round(kw['cell'],8)
         constraints = dct.pop("constraints", None)
         if constraints:
             constraints = [c.todict() for c in atoms.constraints]
