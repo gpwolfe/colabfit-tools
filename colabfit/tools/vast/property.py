@@ -55,6 +55,7 @@ MAIN_KEY_MAP = {
     "cauchy-stress": stress_info,
     "atomization-energy": energy_info,
     "adsorption-energy": energy_info,
+    "energy-above-hull": energy_info,
     "formation-energy": energy_info,
     "band-gap": energy_info,
 }

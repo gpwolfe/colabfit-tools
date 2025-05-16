@@ -1251,6 +1251,42 @@ class S3BatchManager:
 
 
 def write_md_partition(partition, config):
+    import boto3
+
+    class S3BatchManager:
+        def __init__(self, bucket_name, access_id, secret_key, endpoint_url=None):
+            self.bucket_name = bucket_name
+            self.access_id = access_id
+            self.secret_key = secret_key
+            self.endpoint_url = endpoint_url
+            self.client = self.get_client()
+            self.MAX_BATCH_SIZE = 100
+
+        def get_client(self):
+            return boto3.client(
+                "s3",
+                use_ssl=False,
+                endpoint_url=self.endpoint_url,
+                aws_access_key_id=self.access_id,
+                aws_secret_access_key=self.secret_key,
+                region_name="fake-region",
+                config=boto3.session.Config(
+                    signature_version="s3v4", s3={"addressing_style": "path"}
+                ),
+            )
+
+        def batch_write(self, file_batch):
+            results = []
+            for key, content in file_batch:
+                try:
+                    self.client.put_object(
+                        Bucket=self.bucket_name, Key=key, Body=content
+                    )
+                    results.append((key, None))
+                except Exception as e:
+                    results.append((key, str(e)))
+            return results
+
     s3_mgr = S3BatchManager(
         bucket_name=config["bucket_dir"],
         access_id=config["access_key"],
