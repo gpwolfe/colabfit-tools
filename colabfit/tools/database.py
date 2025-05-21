@@ -1785,7 +1785,7 @@ FROM dataset_code_specific_parameters
 WHERE dataset_id = '{family}';
 """
         params = self.general_query(sql_param)
-        params = params[0]['code_specific_parameters']
+        params = params[0]['code_specific_inputs']
         code = parameters.get('code', None)
         if params != code:
             raise ValueError(
