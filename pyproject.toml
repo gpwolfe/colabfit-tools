@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools >= 61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "colabfit-tools"
+description = "A suite of tools for working with training datasets for interatomic potentials"
+license = {file = 'LICENSE'}
+readme = "README.md"
+authors = [
+    {name = 'ColabFit'}
+]
+version = "0.0.2"
+requires-python = ">= 3.10"
+dependencies = [
+    "ase",
+    "kim_property",
+    "numpy",
+    "tqdm",
+    "markdown",
+    "plotly",
+    "django",
+    "periodictable",
+    "unidecode",
+    "notebook",
+    "vastdb",
+]
+classifiers=[
+    "Development Status :: 3 - Alpha",
+    "Topic :: Utilities",
+    "License :: OSI Approved :: BSD License",
+]
+keywords = ["machine learning", "interatomic potentials"]
+
+[tool.setuptools.packages.find]
+exclude = ["public"]
+
+[project.urls]
+Homepage = "http://colabfit.org"
+Documentation = "https://colabfit.github.io/colabfit-tools/html/index.html"
+Repository = "https://github.com/colabfit/colabfit-tools"
