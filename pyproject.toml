@@ -24,6 +24,8 @@ dependencies = [
     "unidecode",
     "notebook",
     "vastdb",
+    "psycopg",
+    "pyspark"
 ]
 classifiers=[
     "Development Status :: 3 - Alpha",
