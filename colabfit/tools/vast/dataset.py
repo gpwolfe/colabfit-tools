@@ -104,6 +104,7 @@ class Dataset:
             "atomic_forces",
             "adsorption_energy",
             "electronic_band_gap",
+            "energy_above_hull",
             "cauchy_stress",
             "formation_energy",
             "energy",
