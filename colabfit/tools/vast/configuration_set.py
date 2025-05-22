@@ -115,6 +115,7 @@ class ConfigurationSet:
             x[1] for x in sorted(atomic_ratios_coll, key=lambda x: x["element"])
         ]
         config_df.unpersist()
+        row_dict["ordered"] = self.ordered
         return row_dict
 
     def __hash__(self):
@@ -139,5 +140,6 @@ configuration_set_info = namedtuple(
         "co_label_match",
         "cs_name",
         "cs_description",
+        "ordered",
     ],
 )

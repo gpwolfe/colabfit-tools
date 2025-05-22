@@ -1085,15 +1085,16 @@ class DataManager:
         2. String pattern for matching CONFIGURATION LABELS
         3. Name for configuration set
         4. Description for configuration set
+        5. Boolean for whether configuration set is ordered
         """
         dataset_id = self.dataset_id
         config_set_rows = []
         co_cs_write_df = None
-        for i, (names_match, label_match, cs_name, cs_desc) in tqdm(
+        for i, (names_match, label_match, cs_name, cs_desc, ordered) in tqdm(
             enumerate(name_label_match), desc="Creating Configuration Sets"
         ):
             logger.info(
-                f"names match: {names_match}, label: {label_match}, cs_name: {cs_name}, cs_desc: {cs_desc}"
+                f"names match: {names_match}, label: {label_match}, cs_name: {cs_name}, cs_desc: {cs_desc}, ordered: {ordered}"  # noqa E501
             )
             config_set_query_df = loader.config_set_query(
                 dataset_id=dataset_id,
@@ -1137,6 +1138,7 @@ class DataManager:
                 description=cs_desc,
                 config_df=config_set_query_df,
                 dataset_id=self.dataset_id,
+                ordered=ordered,
             )
             co_cs_df = co_id_df.withColumn("configuration_set_id", sf.lit(config_set.id))
             if co_cs_write_df is None:
@@ -1167,13 +1169,14 @@ class DataManager:
         loader,
         name: str,
         authors: list[str],
+        description: str,
         publication_link: str,
         data_link: str,
-        description: str,
         other_links: list[str] = None,
         publication_year: str = None,
         doi: str = None,
         labels: list[str] = None,
+        equilibrium: bool = False,
         data_license: str = "CC-BY-4.0",
     ):
 
@@ -1212,6 +1215,7 @@ class DataManager:
             data_license=data_license,
             configuration_set_ids=cs_ids,
             publication_year=publication_year,
+            equilibrium=equilibrium,
         )
         ds_df = loader.spark.createDataFrame([ds.row_dict], schema=dataset_arr_schema)
         loader.write_table(ds_df, loader.dataset_table)
