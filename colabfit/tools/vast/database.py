@@ -80,6 +80,17 @@ def generate_string():
     return get_random_string(12, allowed_chars=string.ascii_lowercase + "1234567890")
 
 
+def get_session():
+    from dotenv import load_dotenv
+    import os
+
+    load_dotenv()
+    access = os.getenv("VAST_DB_ACCESS")
+    secret = os.getenv("VAST_DB_SECRET")
+    endpoint = os.getenv("VAST_DB_ENDPOINT")
+    return Session(access=access, secret=secret, endpoint=endpoint)
+
+
 class VastDataLoader:
     def __init__(
         self,

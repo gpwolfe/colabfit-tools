@@ -166,6 +166,20 @@ def spark_to_arrow_type(spark_type):
         return pa.timestamp("us")
     elif isinstance(spark_type, BooleanType):
         return pa.bool_()
+    elif isinstance(spark_type, ArrayType):
+        element_type = spark_type.elementType
+        if isinstance(element_type, StringType):
+            return pa.list_(pa.string())
+        elif isinstance(element_type, BooleanType):
+            return pa.list_(pa.bool_())
+        elif isinstance(element_type, DoubleType):
+            return pa.list_(pa.float64())
+        elif isinstance(element_type, IntegerType):
+            return pa.list_(pa.int32())
+        elif isinstance(element_type, ArrayType):
+            return pa.list_(spark_to_arrow_type(element_type))
+        else:
+            raise ValueError(f"Unsupported array element type: {element_type}")
     elif isinstance(spark_type, StructType):
         return pa.schema(
             [
