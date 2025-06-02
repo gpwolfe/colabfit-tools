@@ -4,7 +4,7 @@ import pyspark.sql.functions as sf
 from unidecode import unidecode
 
 from colabfit import MAX_STRING_LENGTH
-from colabfit.tools.vast.schema import dataset_schema
+from colabfit.tools.vast.schema import dataset_arr_schema
 from colabfit.tools.vast.utilities import (
     ELEMENT_MAP,
     _empty_dict_from_schema,
@@ -83,7 +83,7 @@ class Dataset:
 
     def to_row_dict(self, config_df, prop_df):
         """"""
-        row_dict = _empty_dict_from_schema(dataset_schema)
+        row_dict = _empty_dict_from_schema(dataset_arr_schema)
         row_dict["last_modified"] = get_last_modified()
         row_dict["nconfiguration_sets"] = len(self.configuration_set_ids)
         config_df = config_df.select(

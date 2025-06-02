@@ -4,7 +4,7 @@ import logging
 
 from pyspark.sql import functions as sf
 
-from colabfit.tools.vast.schema import configuration_set_schema
+from colabfit.tools.vast.schema import configuration_set_arr_schema
 from colabfit.tools.vast.utilities import (
     ELEMENT_MAP,
     _empty_dict_from_schema,
@@ -64,7 +64,7 @@ class ConfigurationSet:
         self.row_dict["hash"] = str(self._hash)
 
     def to_row_dict(self, config_df):
-        row_dict = _empty_dict_from_schema(configuration_set_schema)
+        row_dict = _empty_dict_from_schema(configuration_set_arr_schema)
         row_dict["name"] = self.name
         row_dict["description"] = self.description
         row_dict["dataset_id"] = self.dataset_id

@@ -17,7 +17,7 @@ from kim_property import (
 from kim_property.definition import PROPERTY_ID as VALID_KIM_ID
 
 from colabfit.tools.vast.configuration import AtomicConfiguration
-from colabfit.tools.vast.schema import property_object_schema
+from colabfit.tools.vast.schema import property_object_arr_schema
 from colabfit.tools.vast.utilities import (
     _empty_dict_from_schema,
     _hash,
@@ -260,7 +260,7 @@ class Property(dict):
         """
         self.unique_identifier_kw = [
             k
-            for k in property_object_schema.fieldNames()
+            for k in property_object_arr_schema.fieldNames()
             if k not in _hash_ignored_fields
         ]
 
@@ -525,7 +525,7 @@ class Property(dict):
         """
         Convert the Property to a Spark Row object
         """
-        row_dict = _empty_dict_from_schema(property_object_schema)
+        row_dict = _empty_dict_from_schema(property_object_arr_schema)
         row_dict.update(self.metadata)
         for key, val in self.instance.items():
             if key == "method":

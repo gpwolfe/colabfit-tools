@@ -5,7 +5,7 @@ import numpy as np
 from ase import Atoms
 
 from colabfit import ATOMS_LABELS_FIELD, ATOMS_NAME_FIELD
-from colabfit.tools.vast.schema import config_schema
+from colabfit.tools.vast.schema import config_arr_schema
 from colabfit.tools.vast.utilities import (
     _empty_dict_from_schema,
     _hash,
@@ -250,7 +250,7 @@ class AtomicConfiguration(Atoms):
         self.row_dict["dataset_ids"] = [dataset_id]
 
     def to_row_dict(self):
-        co_dict = _empty_dict_from_schema(config_schema)
+        co_dict = _empty_dict_from_schema(config_arr_schema)
         co_dict["cell"] = self.cell.array.astype(float).tolist()
         co_dict["positions"] = self.positions.astype(float).tolist()
         co_dict["names"] = self.names
