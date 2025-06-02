@@ -82,6 +82,7 @@ def generate_string():
 
 def get_session():
     from dotenv import load_dotenv
+    from vastdb.session import Session
     import os
 
     load_dotenv()

@@ -123,6 +123,7 @@ dataset_arr_schema = StructType(
         StructField("links", StringType(), True),
         StructField("publication_year", StringType(), True),
         StructField("doi", StringType(), True),
+        StructField("equilibrium", BooleanType(), True),
         # StructField("labels", ArrayType(StringType()), True),
     ]
 )
