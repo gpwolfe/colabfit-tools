@@ -17,7 +17,7 @@ from pyspark.sql.types import (
     TimestampType,
 )
 
-from colabfit.tools.vast.utilities import get_stringified_schema
+# from colabfit.tools.vast.utilities import get_stringified_schema
 
 NSITES_COL_SPLITS = 20
 
@@ -48,7 +48,7 @@ config_arr_schema = StructType(
         StructField("positions", ArrayType(ArrayType(DoubleType())), True),
     ]
 )
-config_schema = get_stringified_schema(config_arr_schema)
+# config_schema = get_stringified_schema(config_arr_schema)
 config_md_schema = StructType([field for field in config_arr_schema])
 config_md_schema.add(StructField("metadata", StringType(), True))
 config_row_id_schema = StructType([field for field in config_arr_schema])
@@ -83,7 +83,7 @@ property_object_arr_schema = StructType(
     ]
 )
 
-property_object_schema = get_stringified_schema(property_object_arr_schema)
+# property_object_schema = get_stringified_schema(property_object_arr_schema)
 property_object_md_schema = StructType([field for field in property_object_arr_schema])
 property_object_md_schema.add(StructField("metadata", StringType(), True))
 property_object_row_id_schema = StructType(
@@ -128,7 +128,7 @@ dataset_arr_schema = StructType(
     ]
 )
 
-dataset_schema = get_stringified_schema(dataset_arr_schema)
+# dataset_schema = get_stringified_schema(dataset_arr_schema)
 
 
 configuration_set_arr_schema = StructType(
@@ -151,7 +151,7 @@ configuration_set_arr_schema = StructType(
     ]
 )
 
-configuration_set_schema = get_stringified_schema(configuration_set_arr_schema)
+# configuration_set_schema = get_stringified_schema(configuration_set_arr_schema)
 
 co_cs_map_schema = StructType(
     [

@@ -10,8 +10,6 @@ from colabfit.tools.vast.utilities import (
     _empty_dict_from_schema,
     _hash,
     get_last_modified,
-    str_to_arrayof_int,
-    str_to_arrayof_str,
 )
 
 logger = logging.getLogger(__name__)
@@ -110,27 +108,27 @@ class Dataset:
             "energy",
         )
 
-        int_array_cols = ["atomic_numbers", "dimension_types"]
-        str_array_cols = ["elements"]
-        config_df = config_df.select(
-            [
-                (
-                    str_to_arrayof_int(sf.col(col)).alias(col)
-                    if col in int_array_cols
-                    else col
-                )
-                for col in config_df.columns
-            ]
-        ).select(
-            [
-                (
-                    str_to_arrayof_str(sf.col(col)).alias(col)
-                    if col in str_array_cols
-                    else col
-                )
-                for col in config_df.columns
-            ]
-        )
+        # int_array_cols = ["atomic_numbers", "dimension_types"]
+        # str_array_cols = ["elements"]
+        # config_df = config_df.select(
+        #     [
+        #         (
+        #             str_to_arrayof_int(sf.col(col)).alias(col)
+        #             if col in int_array_cols
+        #             else col
+        #         )
+        #         for col in config_df.columns
+        #     ]
+        # ).select(
+        #     [
+        #         (
+        #             str_to_arrayof_str(sf.col(col)).alias(col)
+        #             if col in str_array_cols
+        #             else col
+        #         )
+        #         for col in config_df.columns
+        #     ]
+        # )
         config_df.cache()
         agg_df = config_df.agg(
             sf.count_distinct("id").alias("nconfigurations"),

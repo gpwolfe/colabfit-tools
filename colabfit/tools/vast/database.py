@@ -38,25 +38,25 @@ from colabfit.tools.vast.schema import (
     co_cs_map_schema,
     config_arr_schema,
     config_md_schema,
-    config_schema,
+    # config_schema,
     configuration_set_arr_schema,
-    configuration_set_schema,
+    # configuration_set_schema,
     dataset_arr_schema,
-    dataset_schema,
+    # dataset_schema,
     property_object_arr_schema,
     property_object_md_schema,
-    property_object_schema,
+    # property_object_schema,
 )
 from colabfit.tools.vast.utilities import (
     _hash,
     get_last_modified,
     get_spark_field_type,
     spark_schema_to_arrow_schema,
-    split_long_string_cols,
-    stringify_df_val_udf,
-    unstring_df_val,
-    str_to_arrayof_int,
-    str_to_arrayof_str,
+    # split_long_string_cols,
+    # stringify_df_val_udf,
+    # unstring_df_val,
+    # str_to_arrayof_int,
+    # str_to_arrayof_str,
 )
 
 logger = logging.getLogger(__name__)
@@ -200,14 +200,14 @@ class VastDataLoader:
         check_length_col: str = None,
     ):
         """Include self.table_prefix in the table name when passed to this function"""
-        string_schema_dict = {
-            self.config_table: config_schema,
-            self.config_set_table: configuration_set_schema,
-            self.dataset_table: dataset_schema,
-            self.prop_object_table: property_object_schema,
+        schema_dict = {
+            self.config_table: config_arr_schema,
+            self.config_set_table: configuration_set_arr_schema,
+            self.dataset_table: dataset_arr_schema,
+            self.prop_object_table: property_object_arr_schema,
             self.co_cs_map_table: co_cs_map_schema,
         }
-        table_schema = string_schema_dict[table_name]
+        table_schema = schema_dict[table_name]
         arrow_schema = spark_schema_to_arrow_schema(table_schema)
         for field in arrow_schema:
             field = field.with_nullable(True)
@@ -217,9 +217,9 @@ class VastDataLoader:
             with self.session.transaction() as tx:
                 schema = tx.bucket(bucket_name).schema(schema_name)
                 schema.create_table(table_n, arrow_schema)
-        string_cols = [
-            f.name for f in spark_df.schema if f.dataType.typeName() == "array"
-        ]
+        # string_cols = [
+        #     f.name for f in spark_df.schema if f.dataType.typeName() == "array"
+        # ]
         ids = [x["id"] for x in spark_df.select("id").collect()]
         batched_ids = batched(ids, 10000)
         existing_df_array = []
@@ -251,19 +251,12 @@ class VastDataLoader:
                     write_rows = spark_df
                 write_rows = self.write_metadata(write_rows)
                 write_rows = write_rows.select(
-                    *[
-                        (
-                            stringify_df_val_udf(sf.col(col)).alias(col)
-                            if col in string_cols
-                            else col
-                        )
-                        for col in table_schema.fieldNames()
-                    ]
+                    *[col for col in table_schema.fieldNames()]
                 )
-                if check_length_col is not None:
-                    write_rows = split_long_string_cols(
-                        write_rows, check_length_col, _COL_MAX_STRING_LEN
-                    )
+                # if check_length_col is not None:
+                #     write_rows = split_long_string_cols(
+                #         write_rows, check_length_col, _COL_MAX_STRING_LEN
+                #     )
                 arrow_rec_batch = pa.table(
                     [pa.array(col) for col in zip(*write_rows.collect())],
                     schema=arrow_schema,
@@ -291,27 +284,27 @@ class VastDataLoader:
         check_unique: bool = True,
     ):
         """Include self.table_prefix in the table name when passed to this function"""
-        string_schema_dict = {
-            self.config_table: config_schema,
-            self.config_set_table: configuration_set_schema,
-            self.dataset_table: dataset_schema,
-            self.prop_object_table: property_object_schema,
+        schema_dict = {
+            self.config_table: config_arr_schema,
+            self.config_set_table: configuration_set_arr_schema,
+            self.dataset_table: dataset_arr_schema,
+            self.prop_object_table: property_object_arr_schema,
             self.co_cs_map_table: co_cs_map_schema,
         }
-        table_schema = string_schema_dict[table_name]
+        table_schema = schema_dict[table_name]
         if ids_filter is not None:
             spark_df = spark_df.filter(sf.col("id").isin(ids_filter))
 
         bucket_name, schema_name, table_n = self._get_table_split(table_name)
-        string_cols = [
-            f.name for f in spark_df.schema if f.dataType.typeName() == "array"
-        ]
-        for col in string_cols:
-            spark_df = spark_df.withColumn(col, stringify_df_val_udf(sf.col(col)))
-        if check_length_col is not None:
-            spark_df = split_long_string_cols(
-                spark_df, check_length_col, _COL_MAX_STRING_LEN
-            )
+        # string_cols = [
+        #     f.name for f in spark_df.schema if f.dataType.typeName() == "array"
+        # ]
+        # for col in string_cols:
+        #     spark_df = spark_df.withColumn(col, stringify_df_val_udf(sf.col(col)))
+        # if check_length_col is not None:
+        #     spark_df = split_long_string_cols(
+        #         spark_df, check_length_col, _COL_MAX_STRING_LEN
+        #     )
         arrow_schema = spark_schema_to_arrow_schema(table_schema)
         for field in arrow_schema:
             field = field.with_nullable(True)
@@ -406,7 +399,7 @@ class VastDataLoader:
         table_name,
         cols: list[str],
         elems: list[str],
-        str_schema,
+        # str_schema,
         arr_schema,
     ):
         """
@@ -439,14 +432,14 @@ class VastDataLoader:
         if isinstance(elems, str):
             elems = [elems]
         update_cols = cols + ["last_modified"]
-        arr_cols = [
-            col
-            for col in cols
-            if get_spark_field_type(arr_schema, col).typeName() == "array"
-        ]
-        str_col_types = {
-            col: get_spark_field_type(str_schema, col) for col in update_cols
-        }
+        # arr_cols = [
+        #     col
+        #     for col in cols
+        #     if get_spark_field_type(arr_schema, col).typeName() == "array"
+        # ]
+        # str_col_types = {
+        #     col: get_spark_field_type(str_schema, col) for col in update_cols
+        # }
         unstr_col_types = {
             col: get_spark_field_type(arr_schema, col) for col in update_cols
         }
@@ -454,13 +447,16 @@ class VastDataLoader:
             "id": StringType(),
             "$row_id": LongType(),
         }
-        str_col_types.update(addtl_fields)
+        # str_col_types.update(addtl_fields)
         unstr_col_types.update(addtl_fields)
         read_schema = StructType(
-            [StructField(col, col_type, True) for col, col_type in str_col_types.items()]
+            [
+                StructField(col, col_type, True)
+                for col, col_type in unstr_col_types.items()
+            ]
         )
         arrow_schema = spark_schema_to_arrow_schema(
-            StructType([field for field in str_schema if field.name in update_cols])
+            StructType([field for field in arr_schema if field.name in update_cols])
         )
         arrow_schema = arrow_schema.append(pa.field("$row_id", pa.uint64()))
 
@@ -482,11 +478,11 @@ class VastDataLoader:
                 rec_batch = rec_batch.read_all()
             rec_batch_pd = rec_batch.to_struct_array().to_pandas()
             duplicate_df = self.spark.createDataFrame(rec_batch_pd, schema=read_schema)
-            for col_name in arr_cols:
-                unstring_udf = sf.udf(unstring_df_val, unstr_col_types[col_name])
-                duplicate_df = duplicate_df.withColumn(
-                    col_name, unstring_udf(sf.col(col_name))
-                )
+            # for col_name in arr_cols:
+            #     unstring_udf = sf.udf(unstring_df_val, unstr_col_types[col_name])
+            #     duplicate_df = duplicate_df.withColumn(
+            #         col_name, unstring_udf(sf.col(col_name))
+            #     )
             for col, elem in zip(cols, elems):
                 if col == "labels":
                     if df.filter(sf.col("labels").isNotNull()).count() == 0:
@@ -503,16 +499,7 @@ class VastDataLoader:
             duplicate_df = duplicate_df.withColumn(
                 "last_modified", sf.lit(update_time).cast("timestamp")
             )
-            duplicate_df = duplicate_df.select(
-                *[
-                    (
-                        stringify_df_val_udf(sf.col(col)).alias(col)
-                        if col in arr_cols
-                        else col
-                    )
-                    for col in arrow_schema.names
-                ]
-            )
+            duplicate_df = duplicate_df.select(*[col for col in arrow_schema.names])
             update_table = pa.table(
                 [pa.array(col) for col in zip(*duplicate_df.collect())],
                 schema=arrow_schema,
@@ -540,19 +527,12 @@ class VastDataLoader:
         Returns:
             DataFrame -- Spark DataFrame
         """
-        string_schema_dict = {
-            self.config_table: config_schema,
-            self.config_set_table: configuration_set_schema,
-            self.dataset_table: dataset_schema,
-            self.prop_object_table: property_object_schema,
-            self.co_cs_map_table: co_cs_map_schema,
-        }
-        unstring_schema_dict = {
-            self.config_table: config_arr_schema,
-            self.config_set_table: configuration_set_arr_schema,
-            self.dataset_table: dataset_arr_schema,
-            self.prop_object_table: property_object_arr_schema,
-        }
+        # unstring_schema_dict = {
+        #     self.config_table: config_arr_schema,
+        #     self.config_set_table: configuration_set_arr_schema,
+        #     self.dataset_table: dataset_arr_schema,
+        #     self.prop_object_table: property_object_arr_schema,
+        # }
         md_schema_dict = {
             self.config_table: config_md_schema,
             self.config_set_table: configuration_set_arr_schema,
@@ -562,13 +542,13 @@ class VastDataLoader:
         if table_name in [self.config_set_table, self.dataset_table]:
             read_metadata = False
         df = self.spark.read.table(table_name)
-        if unstring or read_metadata:
-            schema = unstring_schema_dict[table_name]
-            schema_type_dict = {f.name: f.dataType for f in schema}
-            string_cols = [f.name for f in schema if f.dataType.typeName() == "array"]
-            for col in string_cols:
-                unstring_udf = sf.udf(unstring_df_val, schema_type_dict[col])
-                df = df.withColumn(col, unstring_udf(sf.col(col)))
+        # if unstring or read_metadata:
+        # schema = unstring_schema_dict[table_name]
+        # schema_type_dict = {f.name: f.dataType for f in schema}
+        # string_cols = [f.name for f in schema if f.dataType.typeName() == "array"]
+        # for col in string_cols:
+        #     unstring_udf = sf.udf(unstring_df_val, schema_type_dict[col])
+        #     df = df.withColumn(col, unstring_udf(sf.col(col)))
         if read_metadata:
             schema = md_schema_dict[table_name]
             config = {
@@ -581,8 +561,8 @@ class VastDataLoader:
             df = df.rdd.mapPartitions(
                 lambda partition: read_md_partition(partition, config)
             ).toDF(schema)
-        if not read_metadata and not unstring:
-            schema = string_schema_dict[table_name]
+        # if not read_metadata and not unstring:
+        #     schema = string_schema_dict[table_name]
         mismatched_cols = [
             x
             for x in [(f.name, f.dataType.typeName()) for f in df.schema]
@@ -732,7 +712,7 @@ class VastDataLoader:
             "atomic_numbers",
         ]
         read_schema = StructType(
-            [field for field in config_schema.fields if field.name in config_df_cols]
+            [field for field in config_arr_schema.fields if field.name in config_df_cols]
         )
         spark_df = None
         if configuration_ids is not None:
@@ -1067,7 +1047,7 @@ class DataManager:
                         table_name=loader.config_table,
                         cols=["dataset_ids", "names", "labels"],
                         elems=[self.dataset_id, None, None],
-                        str_schema=config_schema,
+                        # str_schema=config_schema,
                         arr_schema=config_arr_schema,
                     )
 
@@ -1082,7 +1062,7 @@ class DataManager:
                         table_name=loader.prop_object_table,
                         cols=["multiplicity"],
                         elems=[None],
-                        str_schema=property_object_schema,
+                        # str_schema=property_object_schema,
                         arr_schema=property_object_arr_schema,
                     )
 
@@ -1118,25 +1098,25 @@ class DataManager:
                 .distinct()
                 .withColumnRenamed("id", "configuration_id")
             )
-            string_cols = [
-                "elements",
-            ]
-            config_set_query_df = config_set_query_df.select(
-                [
-                    col if col not in string_cols else str_to_arrayof_str(col).alias(col)
-                    for col in config_set_query_df.columns
-                ]
-            )
-            int_cols = [
-                "atomic_numbers",
-                "dimension_types",
-            ]
-            config_set_query_df = config_set_query_df.select(
-                [
-                    col if col not in int_cols else str_to_arrayof_int(col).alias(col)
-                    for col in config_set_query_df.columns
-                ]
-            )
+            # string_cols = [
+            #     "elements",
+            # ]
+            # config_set_query_df = config_set_query_df.select(
+            #     [
+            #         col if col not in string_cols else str_to_arrayof_str(col).alias(col) # noqa E501
+            #         for col in config_set_query_df.columns
+            #     ]
+            # )
+            # int_cols = [
+            #     "atomic_numbers",
+            #     "dimension_types",
+            # ]
+            # config_set_query_df = config_set_query_df.select(
+            #     [
+            #         col if col not in int_cols else str_to_arrayof_int(col).alias(col)
+            #         for col in config_set_query_df.columns
+            #     ]
+            # )
             t = time()
             prelim_cs_id = f"CS_{cs_name}_{self.dataset_id}"
             co_cs_df = loader.get_co_cs_mapping(prelim_cs_id)
