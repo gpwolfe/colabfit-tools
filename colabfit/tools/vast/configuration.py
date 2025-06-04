@@ -117,14 +117,25 @@ class AtomicConfiguration(Atoms):
 
     def set_metadata(self, co_md_map):
         """
-        Returns metadata for a configuration from a property map.
-        This should be called at creation of AtomicConfiguration in order
-        to include metadata in the hash.
+        Sets and returns metadata for a configuration based on a provided property
+        map. This method should be called during the creation of an
+        AtomicConfiguration to ensure that relevant metadata is included in the
+        configuration's hash. It processes the provided metadata mapping, setting
+        values either directly or by referencing fields in the configuration's
+        `info` or `arrays` attributes. If units are specified for a metadata
+        field, they are included in the output.
 
-        Args:
-            co_md_map (dict): Property map of metadata to be used to set configuration
-            metadata for a configuration.
-
+        co_md_map (dict): A dictionary mapping metadata field names to
+            dictionaries specifying either a "value" or a "field" key, and
+            optionally a "units" key.
+            - If "value" is present, it is used directly.
+            - If "field" is present, its value is used as a key to look up in
+            `self.info` or `self.arrays`.
+            - If "units" is present, it is included in the output.
+        Returns:
+            dict: A dictionary containing the gathered metadata fields, including
+            any units, after processing and parsing by
+            `_parse_unstructured_metadata`.
         """
         if co_md_map is None:
             co_md_map = {}
@@ -175,14 +186,11 @@ class AtomicConfiguration(Atoms):
             dict: Keys and their associated values that will be included under a
             Configuration's entry in the Database
         """
-
         atomic_species = self.get_chemical_symbols()
-
         natoms = len(atomic_species)
         elements = sorted(list(set(atomic_species)))
         nelements = len(elements)
         elements_ratios = [atomic_species.count(el) / natoms for el in elements]
-
         species_counts = [atomic_species.count(sp) for sp in elements]
 
         # Build per-element proportions
@@ -250,6 +258,7 @@ class AtomicConfiguration(Atoms):
         self.row_dict["dataset_ids"] = [dataset_id]
 
     def to_row_dict(self):
+        """Converts the Configuration to a dictionary that can be used as a row in a Spark DataFrame, Vast DB table or similar."""  # noqa E501
         co_dict = _empty_dict_from_schema(config_arr_schema)
         co_dict["cell"] = self.cell.array.astype(float).tolist()
         co_dict["positions"] = self.positions.astype(float).tolist()

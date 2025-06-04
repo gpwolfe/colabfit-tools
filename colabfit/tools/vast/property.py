@@ -17,7 +17,7 @@ from kim_property import (
 from kim_property.definition import PROPERTY_ID as VALID_KIM_ID
 
 from colabfit.tools.vast.configuration import AtomicConfiguration
-from colabfit.tools.vast.schema import property_object_arr_schema
+from colabfit.tools.vast.schema import property_object_schema
 from colabfit.tools.vast.utilities import (
     _empty_dict_from_schema,
     _hash,
@@ -195,43 +195,48 @@ class InvalidPropertyDefinition(Exception):
 
 class Property(dict):
     """
-    A Property is used to store the results of some kind of calculation or
-    experiment, and should be mapped to an `OpenKIM Property Definition
-    <https://openkim.org/doc/schema/properties-framework/>`_. Best
-    practice is for the Property to also point to one or more
-    PropertySettings objects that fully define the conditions under which the
-    Property was obtained.
+    Property class for handling KIM property definitions and instances in ColabFit.
+
+    This class extends `dict` and provides methods for constructing, standardizing,
+    and preparing calculated properties for inclusion in a Vast DB table.
 
     Attributes:
+        unique_identifier_kw (list): List of keys used for unique identification.
+        instance (dict): Dictionary defining an OpenKIM Property Instance.
+        definitions (list): List of KIM Property Definitions.
+        nsites (int): Number of sites (atoms) in the configuration.
+        property_map (dict): Mapping of property names to their extraction details.
+        metadata (dict): Parsed metadata associated with the property.
+        chemical_formula_hill (str): Hill notation chemical formula.
+        dataset_id (str): Identifier for the dataset.
+        row_dict (dict): Dictionary representation for Spark Row.
+        _hash (int): Hash of the property for uniqueness.
+        _id (str): Shortened unique identifier for the property.
 
-        definition (dict):
-            A KIM Property Definition
+    Methods:
+        __init__(...): Initialize a Property object.
+        instance (property): Get or set the property instance.
+        property_fields (property): Get the fields present in the property instance.
+        get_property_value(property_dict, configuration): Extract property values from a configuration. # noqa E501
+        get_kim_instance(definition): Construct a KIM property instance from a definition. # noqa E501
+        from_definition(definitions, configuration, property_map, standardize_energy):
+            Construct a Property from definitions, an AtomicConfiguration, and property map. # noqa E501
+        to_row_dict(): Convert the Property to a Spark Row-compatible dictionary.
+        standardize_energy(): Convert property energy units to ColabFit-compliant units.
+        __hash__(): Compute a hash for the property.
+        __eq__(other): Compare two Property objects for equality.
+        todict(): Return the property instance as a dictionary.
+        keys(): Return the keys of the property instance.
+        __setitem__(k, v): Set a value in the property instance.
+        __getitem__(k): Get a value from the property instance.
+        get_data(k): Get the source-value for a property key as a numpy array.
+        __delitem__(k): Delete a key from the property instance.
+        __str__(): String representation of the Property.
+        __repr__(): String representation of the Property.
 
-        instance (dict):
-            A dictionary defining an OpenKIM Property Instance.
-            For more details, see the `OpenKIM Property Framework
-            <https://openkim.org/doc/schema/properties-framework/>`_
-            documentation. In most cases, this dictionary should not be manually
-            constructed by the user. Instead, a Property Definition and a
-            Configuration should be passed to the :meth:`from_definition`
-            function.
-
-        property_map (dict):
-            key = a string that can be used as a key like :code:`self.instance[key]`
-
-            value = A sub-dictionary with the following keys:
-
-            * :attr:`field`:
-                A field name used to access :attr:`Configuration.info` or
-                :attr:`Configuration.arrays`
-            * :attr:`units`:
-                A string matching one of the units names in
-                `ase.units <https://wiki.fysik.dtu.dk/ase/ase/units.html>`_.
-                These units will be used to convert the given units to eV, Angstrom,
-                a.m.u., Kelvin, ... For compound units (e.g. "eV/Ang"), the string will
-                be split on '*' and '/'. The raw data will be multiplied by the first
-                unit and anything preceded by a '*'. It will be divided by anything
-                preceded by a '/'.
+    Usage:
+        The Property class is used to manage calculated properties extracted from atomic
+        configurations, standardize units, and prepare input for VastDB tables.
     """
 
     _observers = []
@@ -260,7 +265,7 @@ class Property(dict):
         """
         self.unique_identifier_kw = [
             k
-            for k in property_object_arr_schema.fieldNames()
+            for k in property_object_schema.fieldNames()
             if k not in _hash_ignored_fields
         ]
 
@@ -437,20 +442,34 @@ class Property(dict):
         standardize_energy=True,
     ):
         """
-        A function for constructing a Property given a property setting hash, a property
-        definition, and a property map.
+        Constructs a Property instance from property definitions, a configuration, and a property map.
 
-        Args:
+        This class method parses the provided property definitions and property map to
+        extract property values from the given AtomicConfiguration. It handles metadata
+        extraction, validates property presence, and prepares the property instance
+        dictionary for initialization.
 
-            definition (dict):
-                A valid KIM Property Definition
-
+            definitions (list of dict):
+                List of valid KIM Property Definitions, each as a dictionary.
             configuration (AtomicConfiguration):
-                An AtomicConfiguration object from which to extract the property data
-
+                An AtomicConfiguration object from which to extract property data.
             property_map (dict):
-                A property map as described in the Property attributes section.
+                A mapping from property names to their extraction instructions or keys.
+            standardize_energy (bool, optional):
+                Whether to standardize energy values. Defaults to True.
 
+        Returns:
+            Property:
+                An instance of the Property class constructed from the provided
+                definitions, configuration, and property map.
+
+        Raises:
+            PropertyParsingError:
+                If a property in the property_map is not found in the definitions.
+
+        Notes:
+            - The method also extracts and attaches metadata, chemical formula, and configuration ID. # noqa E501
+            - Properties not found or not present in the configuration are skipped with a warning.    # noqa E501
         """
         pdef_dict = {pdef["property-name"]: pdef for pdef in definitions}
         instances = {
@@ -523,9 +542,9 @@ class Property(dict):
 
     def to_row_dict(self):
         """
-        Convert the Property to a Spark Row object
+        Convert the Property to a dict suitable for inclusion in a Spark DataFrame, Vast DB table, or similar.  # noqa E501
         """
-        row_dict = _empty_dict_from_schema(property_object_arr_schema)
+        row_dict = _empty_dict_from_schema(property_object_schema)
         row_dict.update(self.metadata)
         for key, val in self.instance.items():
             if key == "method":

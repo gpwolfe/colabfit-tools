@@ -139,16 +139,6 @@ def get_spark_field_type(schema, field_name):
     raise ValueError(f"Field name {field_name} not found in schema")
 
 
-# def get_stringified_schema(schema):
-#     new_fields = []
-#     for field in schema:
-#         if field.dataType.typeName() == "array":
-#             new_fields.append(StructField(field.name, StringType(), field.nullable))
-#         else:
-#             new_fields.append(field)
-#     return StructType(new_fields)
-
-
 def spark_to_arrow_type(spark_type):
     """
     Convert PySpark type to PyArrow type.
@@ -255,48 +245,6 @@ def _parse_unstructured_metadata(md_json):
         "metadata_path": after_bucket,
         "metadata_size": sys.getsizeof(metadata),
     }
-
-
-# ############################################################
-# # Functions for converting column values to and from string
-# ############################################################
-
-
-# @sf.udf(returnType=ArrayType(StringType()))
-# def str_to_arrayof_str(val):
-#     try:
-#         if isinstance(val, str) and len(val) > 0 and val[0] == "[":
-#             return literal_eval(val)
-#     except ValueError:
-#         raise ValueError(f"Error converting {val} to list")
-
-
-# @sf.udf(returnType=ArrayType(IntegerType()))
-# def str_to_arrayof_int(val):
-#     if isinstance(val, str) and len(val) > 0 and val[0] == "[":
-#         return literal_eval(val)
-#     raise ValueError(f"Error converting {val} to list")
-
-
-# @sf.udf(returnType=ArrayType(ArrayType(DoubleType())))
-# def str_to_nestedarrayof_double(val):
-#     if val is None:
-#         return None
-#     if isinstance(val, str) and len(val) > 0 and val[0] == "[":
-#         return literal_eval(val)
-#     raise ValueError(f"Error converting {val} to list")
-
-
-# def unstring_df_val(val):
-#     if val is not None and len(val) > 0 and val[0] == "[":
-#         return literal_eval(val)
-#     return val
-
-
-# @sf.udf(returnType=StringType())
-# def stringify_df_val_udf(val):
-#     if val is not None:
-#         return str(val)
 
 
 def convert_stress(keys, stress):

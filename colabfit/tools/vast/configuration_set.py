@@ -49,6 +49,21 @@ class ConfigurationSet:
                 * nperiodic_dimensions: the set of all numbers of periodic dimensions
                 * dimension_types: the set of all periodic boundary choices
 
+    Methods:
+        __init__(self, config_df, name, description, dataset_id, ordered=False):
+            Initializes a ConfigurationSet instance and aggregates configuration info.
+
+        to_row_dict(self, config_df):
+            Converts the ConfigurationSet instance into a dict suitable for inclusion in Spark DataFrame, Vast DB table or similar. # noqa: E501
+
+        __hash__(self):
+            Returns a hash value for the configuration set.
+
+        __str__(self):
+            Returns a string representation of the configuration set.
+
+        __repr__(self):
+            Returns the string representation of the configuration set.
     """
 
     def __init__(self, config_df, name, description, dataset_id, ordered=False):

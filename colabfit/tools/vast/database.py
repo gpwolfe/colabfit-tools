@@ -399,7 +399,6 @@ class VastDataLoader:
         table_name,
         cols: list[str],
         elems: list[str],
-        # str_schema,
         arr_schema,
     ):
         """
@@ -415,8 +414,6 @@ class VastDataLoader:
             List of columns with matching elems to update.
         elems : list[str]
             List of elements corresponding to the columns to be updated.
-        str_schema : Schema
-            The stringed schema of the table.
         arr_schema : Schema
             The unstringed schema of the table.
 

@@ -17,11 +17,82 @@ logger = logging.getLogger(__name__)
 
 class Dataset:
     """
-    A dataset defines a group of configuration sets and computed properties, and
-    aggregates information about those configuration sets and properties.
+    Dataset class for aggregating configurations and computed properties.
 
-    Parameters
-    ----------
+    A Dataset defines a group of configurations and their associated computed
+    properties, aggregating relevant metadata and statistics about these
+    configurations and properties.
+
+    name : str
+        The name of the dataset.
+    authors : list[str]
+        List of author names (last names must contain only alphabetic characters).
+    publication_link : str
+        URL to the source publication describing the dataset.
+    data_link : str
+        URL to the source data.
+    description : str
+        Description of the dataset.
+    config_df : pyspark.sql.DataFrame
+        DataFrame containing configuration information.
+    prop_df : pyspark.sql.DataFrame
+        DataFrame containing computed property information.
+    other_links : list[str], optional
+        Additional relevant links (default: None).
+    dataset_id : str, optional
+        Unique identifier for the dataset (default: None).
+    labels : list[str], optional
+        List of labels or tags for the dataset (default: None).
+    doi : str, optional
+        Digital Object Identifier for the dataset (default: None).
+    configuration_set_ids : list[str], optional
+        List of configuration set IDs included in the dataset (default: []).
+    data_license : str, optional
+        License under which the data is released (default: "CC-BY-ND-4.0").
+    publication_year : str, optional
+        Year of publication (default: None).
+    equilibrium : bool, optional
+        Whether the dataset contains equilibrium configurations (default: False).
+
+    Attributes
+    name : str
+        Name of the dataset.
+    authors : list[str]
+        List of author names.
+    publication_link : str
+        Source publication URL.
+    data_link : str
+        Source data URL.
+    other_links : list[str]
+        Additional links.
+    description : str
+        Dataset description.
+    data_license : str
+        Data license.
+    dataset_id : str
+        Dataset unique identifier.
+    doi : str
+        Digital Object Identifier.
+    publication_year : str
+        Year of dataset publication.
+    configuration_set_ids : list[str]
+        List of configuration set IDs.
+    equilibrium : bool
+        True indicates the dataset contains only equilibrium configurations.
+    row_dict : dict
+        Dict in format for insertion into a Spark DataFrame.
+    _hash : str
+        Hash of the dataset.
+
+    Methods
+    -------
+    to_row_dict(config_df, prop_df)
+        Aggregates configuration and property DataFrames into a metadata dictionary.
+    __str__()
+        Returns a string representation of the Dataset.
+    __repr__()
+        Returns a string representation of the Dataset.
+
     """
 
     def __init__(
@@ -82,7 +153,9 @@ class Dataset:
         logger.info(self.row_dict)
 
     def to_row_dict(self, config_df, prop_df):
-        """"""
+        """
+        Convert Dataset into dict appropriate for insertion into a Spark DataFrame.
+        """
         row_dict = _empty_dict_from_schema(dataset_arr_schema)
         row_dict["last_modified"] = get_last_modified()
         row_dict["nconfiguration_sets"] = len(self.configuration_set_ids)

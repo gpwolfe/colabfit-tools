@@ -1,8 +1,9 @@
 """
-Each schema for VastDB has a corresponding schema for a dataframe with
-the same fields, but with non-stringified lists.
-config_schema (with stringified lists), for example, has a corresponding
-config_arr_schema (with non-stringified lists).
+Schema definitions for VAST data structures used in ColabFit.
+This module defines the schemas for configurations, property objects, datasets,
+configuration sets, and their metadata. These schemas are used to structure
+and validate data within the VAST framework, ensuring consistency and
+integrity across various data operations.
 """
 
 from pyspark.sql.types import (
@@ -16,8 +17,6 @@ from pyspark.sql.types import (
     StructType,
     TimestampType,
 )
-
-# from colabfit.tools.vast.utilities import get_stringified_schema
 
 NSITES_COL_SPLITS = 20
 
@@ -48,7 +47,6 @@ config_arr_schema = StructType(
         StructField("positions", ArrayType(ArrayType(DoubleType())), True),
     ]
 )
-# config_schema = get_stringified_schema(config_arr_schema)
 config_md_schema = StructType([field for field in config_arr_schema])
 config_md_schema.add(StructField("metadata", StringType(), True))
 config_row_id_schema = StructType([field for field in config_arr_schema])
@@ -83,14 +81,12 @@ property_object_arr_schema = StructType(
     ]
 )
 
-# property_object_schema = get_stringified_schema(property_object_arr_schema)
 property_object_md_schema = StructType([field for field in property_object_arr_schema])
 property_object_md_schema.add(StructField("metadata", StringType(), True))
 property_object_row_id_schema = StructType(
     [field for field in property_object_arr_schema]
 )
 property_object_row_id_schema.add(StructField("$row_id", LongType(), True))
-
 
 dataset_arr_schema = StructType(
     [
@@ -128,9 +124,6 @@ dataset_arr_schema = StructType(
     ]
 )
 
-# dataset_schema = get_stringified_schema(dataset_arr_schema)
-
-
 configuration_set_arr_schema = StructType(
     [
         StructField("id", StringType(), True),
@@ -150,8 +143,6 @@ configuration_set_arr_schema = StructType(
         StructField("extended_id", StringType(), True),
     ]
 )
-
-# configuration_set_schema = get_stringified_schema(configuration_set_arr_schema)
 
 co_cs_map_schema = StructType(
     [
