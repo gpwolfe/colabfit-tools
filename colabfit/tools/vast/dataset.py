@@ -19,61 +19,100 @@ logger = logging.getLogger(__name__)
 
 class Dataset:
     """
-    A dataset defines a group of configuration sets and computed properties, and
-    aggregates information about those configuration sets and properties.
+    Represents a dataset that aggregates configuration sets and computed properties,
+    along with associated metadata and aggregated statistics.
 
-    Attributes:
+    A Dataset object is used to organize and summarize information about a collection
+    of configuration sets and their computed properties, including authorship,
+    publication links, licensing, and various aggregated statistics derived from the
+    data.
 
-        configuration_set_ids (list):
-            A list of attached configuration sets
+    Parameters
+    ----------
+    name : str
+        The name of the dataset.
+    authors : list of str
+    publication_link : str
+        Link to the publication associated with the dataset.
+    data_link : str
+        Link to the source data for the dataset.
+    description : str
+    config_df : pyspark.sql.DataFrame
+        DataFrame containing configuration set information.
+    prop_df : pyspark.sql.DataFrame
+        DataFrame containing property information.
+    other_links : list of str, optional
+        Additional external links related to the dataset (default: None).
+    dataset_id : str, optional
+        Unique identifier for the dataset (default: None).
+    labels : list of str, optional
+        List of labels associated with the dataset (default: None).
+    doi : str, optional
+        Digital Object Identifier for the dataset (default: None).
+    configuration_set_ids : list of str, optional
+        List of configuration set IDs attached to the dataset (default: []).
+    data_license : str, optional
+        License associated with the dataset's data (default: "CC-BY-ND-4.0").
+    publication_year : str, optional
+        Year of publication for the dataset (default: None).
 
-        property_ids (list):
-            A list of attached properties
+    Attributes
+    ----------
+    name : str
+        The name of the dataset.
+    authors : list of str
+    publication_link : str
+        Link to the publication associated with the dataset.
+    data_link : str
+        Link to the source data for the dataset.
+    other_links : list of str or None
+        Additional external links related to the dataset.
+    description : str
+    data_license : str
+        License associated with the dataset's data.
+    dataset_id : str or None
+        Unique identifier for the dataset.
+    doi : str or None
+        Digital Object Identifier for the dataset.
+    publication_year : str or None
+        Year of publication for the dataset.
+    configuration_set_ids : list of str
+        List of configuration set IDs attached to the dataset.
+    row_dict : dict
+        Dictionary containing aggregated statistics and metadata for the dataset,
+        appropriate for use in a Spark DataFrame, Vast DB table or similar.
+        Includes:
+            - nconfigurations: Number of configurations.
+            - nsites: Total number of sites.
+            - nelements: Number of unique elements.
+            - elements: List of unique elements.
+            - nperiodic_dimensions: Distinct periodic dimensions.
+            - dimension_types: Distinct dimension types.
+            - total_elements_ratios: Ratios of each element in the dataset.
+            - nproperty_objects: Number of property objects.
+            - Various property counts and statistics.
+            - dataset authors
+            - dataset description
+            - dataset license
+            - links to publication, data, and resources associated with the dataset.
+            - dataset name
+            - dataset publication_year
+            - doi: Digital Object Identifier for the dataset.
+    labels : list of str or None
+        List of labels associated with the dataset.
 
-        name (str):
-            The name of the dataset
+    Methods
+    -------
+    to_row_dict(config_df, prop_df)
+        Aggregates statistics and metadata from the configuration and property DataFrames
+        into a dictionary representation suitable for use in a Spark DataFrame, Vast DB
+        table or similar.
 
-        authors (list or str or None):
-            The names of the authors of the dataset.
+    __str__()
+        Returns a string summary of the dataset.
 
-        links (list or str or None):
-            External links (e.g., journal articles, Git repositories, ...)
-            to be associated with the dataset.
-
-        description (str or None):
-            A human-readable description of the dataset.
-
-        aggregated_info (dict):
-            A dictionary of information that was aggregated rom all of the
-            attached configuration sets and properties. Contains the following
-            information:
-
-                From the configuration sets:
-                    nconfigurations
-                    nsites
-                    nelements
-                    chemical_systems
-                    elements
-                    individual_elements_ratios
-                    total_elements_ratios
-                    configuration_labels
-                    configuration_labels_counts
-                    chemical_formula_reduced
-                    chemical_formula_anonymous
-                    chemical_formula_hill
-                    nperiodic_dimensions
-                    dimension_types
-
-                From the properties:
-                    property_types
-                    property_fields
-                    methods
-                    methods_counts
-                    property_labels
-                    property_labels_counts
-
-        data_license (str):
-            License associated with the Dataset's data
+    __repr__()
+        Returns a string representation of the dataset.
     """
 
     def __init__(
