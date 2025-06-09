@@ -81,7 +81,7 @@ _MAX_STRING_LEN = 60000
 
 # from kim_property.definition import PROPERTY_ID as VALID_KIM_ID
 
-# from kim_property.definition import check_property_definition
+from kim_property.definition import check_property_definition
 
 
 def generate_string():
@@ -1537,6 +1537,7 @@ class DataManager:
         # TODO: try except that property_dict must be jsonable
 
         # check that property dict has correct form
+        check_property_definition(property_dict)
         for key in ["property-id", "property-name", "property-title", "property-description"]:
             assert key in property_dict, f"{key} must be a part of the property definition format"
         json_pd = json.dumps(property_dict) 
