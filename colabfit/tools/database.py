@@ -1781,19 +1781,20 @@ class DataManager:
         # Get family id
         family = dataset_id.split('_')[1]
         # Check if the provided parameters match with the stored values.
-        sql_param = f"""SELECT code_specific_inputs 
-FROM dataset_code_specific_parameters 
-WHERE dataset_id = '{family}';
-"""
-        params = self.general_query(sql_param)
-        params = params[0]['code_specific_inputs']
-        code = parameters.get('code', None)
-        if params != code:
-            raise ValueError(
-                f"The provided parameters['code'] does not match what is "
-                f"stored in the database. All data being uploaded must have "
-                f"matching input parameters."
-            )
+        if parameters:
+            sql_param = f"""SELECT code_specific_inputs 
+                FROM dataset_code_specific_parameters 
+                WHERE dataset_id = '{family}';
+                """
+            params = self.general_query(sql_param)
+            params = params[0]['code_specific_inputs']
+            code = parameters.get('code', None)
+            if params != code:
+                raise ValueError(
+                    f"The provided parameters['code'] does not match what is "
+                    f"stored in the database. All data being uploaded must have "
+                    f"matching input parameters."
+                )
         # convert to CF AtomicConfiguration if not already
         converted_configs = []
         for c in configs:
