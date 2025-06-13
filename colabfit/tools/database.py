@@ -1537,7 +1537,10 @@ class DataManager:
         # TODO: try except that property_dict must be jsonable
 
         # check that property dict has correct form
-        check_property_definition(property_dict)
+        # hack to get around OpenKIM requiring the property-name be a dict
+        tmp_prop = property_dict.copy()
+        tmp_prop.pop("property-name")
+        check_property_definition(tmp_prop)
         for key in ["property-id", "property-name", "property-title", "property-description"]:
             assert key in property_dict, f"{key} must be a part of the property definition format"
         json_pd = json.dumps(property_dict) 
