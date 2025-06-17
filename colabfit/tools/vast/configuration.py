@@ -77,6 +77,7 @@ class AtomicConfiguration(Atoms):
             "cell",
             "pbc",
             "metadata_id",
+            "names",
         ]
         self.struct_identifier_kw = [
             "atomic_numbers",

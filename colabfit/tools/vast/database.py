@@ -1,3 +1,4 @@
+import concurrent.futures
 import itertools
 import logging
 import string
@@ -53,10 +54,10 @@ from colabfit.tools.vast.utilities import (
     get_spark_field_type,
     spark_schema_to_arrow_schema,
     split_long_string_cols,
-    stringify_df_val_udf,
-    unstring_df_val,
     str_to_arrayof_int,
     str_to_arrayof_str,
+    stringify_df_val_udf,
+    unstring_df_val,
 )
 
 logger = logging.getLogger(__name__)
@@ -78,6 +79,19 @@ _COL_MAX_STRING_LEN = 60000
 
 def generate_string():
     return get_random_string(12, allowed_chars=string.ascii_lowercase + "1234567890")
+
+
+def get_session():
+    import os
+
+    from dotenv import load_dotenv
+    from vastdb.session import Session
+
+    load_dotenv()
+    access = os.getenv("VAST_DB_ACCESS")
+    secret = os.getenv("VAST_DB_SECRET")
+    endpoint = os.getenv("VAST_DB_ENDPOINT")
+    return Session(access=access, secret=secret, endpoint=endpoint)
 
 
 class VastDataLoader:
@@ -1008,32 +1022,32 @@ class DataManager:
         co_df = co_df.select(config_md_schema.fieldNames())
         return co_df
 
-    def check_existing_tables(self, loader, batching_ingest=False):
-        """Check tables for conficts before loading data."""
-        if loader.spark.catalog.tableExists(loader.prop_object_table):
-            logger.info(f"table {loader.prop_object_table} exists")
-            if batching_ingest is False:
-                pos_with_mult = loader.read_table(loader.prop_object_table)
-                pos_with_mult = pos_with_mult.filter(
-                    (sf.col("dataset_id") == self.dataset_id)
-                    & (sf.col("multiplicity") > 0)
-                )
-                if pos_with_mult.count() > 0:
-                    raise ValueError(
-                        f"POs for dataset with ID {self.dataset_id} already exist in "
-                        "database with multiplicity > 0.\nTo continue, set "
-                        "multiplicities to 0 with "
-                        f'loader.zero_multiplicity("{self.dataset_id}")'
-                    )
-        if loader.spark.catalog.tableExists(loader.dataset_table):
-            dataset_exists = loader.read_table(loader.dataset_table).filter(
-                sf.col("id") == self.dataset_id
-            )
-            if dataset_exists.count() > 0:
-                raise ValueError(f"Dataset with ID {self.dataset_id} already exists.")
+    # def check_existing_tables(self, loader, batching_ingest=False):
+    #     """Check tables for conficts before loading data."""
+    #     if loader.spark.catalog.tableExists(loader.prop_object_table):
+    #         logger.info(f"table {loader.prop_object_table} exists")
+    #         if batching_ingest is False:
+    #             pos_with_mult = loader.read_table(loader.prop_object_table)
+    #             pos_with_mult = pos_with_mult.filter(
+    #                 (sf.col("dataset_id") == self.dataset_id)
+    #                 & (sf.col("multiplicity") > 0)
+    #             )
+    #             if pos_with_mult.count() > 0:
+    #                 raise ValueError(
+    #                     f"POs for dataset with ID {self.dataset_id} already exist in "
+    #                     "database with multiplicity > 0.\nTo continue, set "
+    #                     "multiplicities to 0 with "
+    #                     f'loader.zero_multiplicity("{self.dataset_id}")'
+    #                 )
+    #     if loader.spark.catalog.tableExists(loader.dataset_table):
+    #         dataset_exists = loader.read_table(loader.dataset_table).filter(
+    #             sf.col("id") == self.dataset_id
+    #         )
+    #         if dataset_exists.count() > 0:
+    #             raise ValueError(f"Dataset with ID {self.dataset_id} already exists.")
 
     def load_co_po_to_vastdb(self, loader, batching_ingest=False):
-        self.check_existing_tables(loader, batching_ingest)
+        # self.check_existing_tables(loader, batching_ingest)
         co_po_rows = self.gather_co_po_in_batches_no_pool()
         for co_po_batch in tqdm(
             co_po_rows,
@@ -1277,15 +1291,32 @@ def write_md_partition(partition, config):
         endpoint_url=config["endpoint"],
     )
     file_batch = []
-    for row in partition:
-        md_path = Path(config["metadata_dir"]) / row["metadata_path"]
-        file_batch.append((str(md_path), row["metadata"]))
+    max_workers = 8
 
-        if len(file_batch) >= s3_mgr.MAX_BATCH_SIZE:
-            _ = s3_mgr.batch_write(file_batch)
-            file_batch = []
-    if file_batch:
-        _ = s3_mgr.batch_write(file_batch)
+    def upload_batch(batch):
+        return s3_mgr.batch_write(batch)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = []
+        for row in partition:
+            md_path = Path(config["metadata_dir"]) / row["metadata_path"]
+            file_batch.append((str(md_path), row["metadata"]))
+            if len(file_batch) >= s3_mgr.MAX_BATCH_SIZE:
+                futures.append(executor.submit(upload_batch, file_batch.copy()))
+                file_batch = []
+        if file_batch:
+            futures.append(executor.submit(upload_batch, file_batch.copy()))
+        # Wait for all uploads to finish
+        concurrent.futures.wait(futures)
+    # for row in partition:
+    #     md_path = Path(config["metadata_dir"]) / row["metadata_path"]
+    #     file_batch.append((str(md_path), row["metadata"]))
+
+    #     if len(file_batch) >= s3_mgr.MAX_BATCH_SIZE:
+    #         _ = s3_mgr.batch_write(file_batch)
+    #         file_batch = []
+    # if file_batch:
+    #     _ = s3_mgr.batch_write(file_batch)
     return iter([])
 
 
