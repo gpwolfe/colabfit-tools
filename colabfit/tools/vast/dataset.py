@@ -131,6 +131,7 @@ class Dataset:
         configuration_set_ids: list[str] = [],
         data_license: str = "CC-BY-ND-4.0",
         publication_year: str = None,
+        equilibrium: bool = False,
     ):
         for auth in authors:
             if not "".join(auth.split(" ")[-1].replace("-", "")).isalpha():
@@ -150,6 +151,7 @@ class Dataset:
         self.doi = doi
         self.publication_year = publication_year
         self.configuration_set_ids = configuration_set_ids
+        self.equilibrium = equilibrium
         if self.configuration_set_ids is None:
             self.configuration_set_ids = []
         self.row_dict = self.to_row_dict(config_df=config_df, prop_df=prop_df)
@@ -188,9 +190,10 @@ class Dataset:
         prop_df = prop_df.select(
             "id",
             "atomization_energy",
-            "atomic_forces_00",
+            "atomic_forces",
             "adsorption_energy",
             "electronic_band_gap",
+            "energy_above_hull",
             "cauchy_stress",
             "formation_energy",
             "energy",
@@ -272,13 +275,13 @@ class Dataset:
             sf.count("adsorption_energy").alias("adsorption_energy_count"),
             sf.count("electronic_band_gap").alias("electronic_band_gap_count"),
             sf.count("cauchy_stress").alias("cauchy_stress_count"),
+            sf.count("energy_above_hull").alias("energy_above_hull_count"),
             sf.count("formation_energy").alias("formation_energy_count"),
             sf.count("energy").alias("energy_count"),
             sf.variance("energy").alias("energy_variance"),
             sf.mean("energy").alias("energy_mean"),
             sf.count_if(
-                (sf.col("atomic_forces_00") != "[]")
-                & (sf.col("atomic_forces_00").isNotNull())
+                (sf.col("atomic_forces") != "[]") & (sf.col("atomic_forces").isNotNull())
             ).alias("atomic_forces_count"),
         )
         count_row = count_df.collect()[0].asDict()
@@ -296,6 +299,7 @@ class Dataset:
         row_dict["name"] = self.name
         row_dict["publication_year"] = self.publication_year
         row_dict["doi"] = self.doi
+        row_dict["equilibrium"] = self.equilibrium
         return row_dict
 
     def __str__(self):

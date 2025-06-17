@@ -45,10 +45,7 @@ config_arr_schema = StructType(
         StructField("metadata_path", StringType(), True),
         StructField("metadata_size", IntegerType(), True),
         StructField("structure_hash", StringType(), True),
-    ]
-    + [
-        StructField(f"positions_{i:02d}", ArrayType(ArrayType(DoubleType())), True)
-        for i in range(NSITES_COL_SPLITS)
+        StructField("positions", ArrayType(ArrayType(DoubleType())), True),
     ]
 )
 config_schema = get_stringified_schema(config_arr_schema)
@@ -72,16 +69,12 @@ property_object_arr_schema = StructType(
         StructField("method", StringType(), True),
         StructField("chemical_formula_hill", StringType(), True),
         StructField("energy", DoubleType(), True),
-    ]
-    + [
-        StructField(f"atomic_forces_{i:02d}", ArrayType(ArrayType(DoubleType())), True)
-        for i in range(NSITES_COL_SPLITS)
-    ]
-    + [
+        StructField("atomic_forces", ArrayType(ArrayType(DoubleType())), True),
         StructField("cauchy_stress", ArrayType(ArrayType(DoubleType())), True),
         StructField("cauchy_stress_volume_normalized", BooleanType(), True),
         StructField("electronic_band_gap", DoubleType(), True),
         StructField("electronic_band_gap_type", StringType(), True),
+        StructField("energy_above_hull", DoubleType(), True),
         StructField("formation_energy", DoubleType(), True),
         StructField("adsorption_energy", DoubleType(), True),
         StructField("atomization_energy", DoubleType(), True),
@@ -118,6 +111,7 @@ dataset_arr_schema = StructType(
         StructField("energy_variance", DoubleType(), True),
         StructField("atomization_energy_count", LongType(), True),
         StructField("adsorption_energy_count", LongType(), True),
+        StructField("energy_above_hull_count", LongType(), True),
         StructField("formation_energy_count", LongType(), True),
         StructField("atomic_forces_count", LongType(), True),
         StructField("electronic_band_gap_count", LongType(), True),
@@ -129,6 +123,7 @@ dataset_arr_schema = StructType(
         StructField("links", StringType(), True),
         StructField("publication_year", StringType(), True),
         StructField("doi", StringType(), True),
+        StructField("equilibrium", BooleanType(), True),
         # StructField("labels", ArrayType(StringType()), True),
     ]
 )

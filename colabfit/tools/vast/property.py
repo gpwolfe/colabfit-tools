@@ -55,6 +55,7 @@ MAIN_KEY_MAP = {
     "cauchy-stress": stress_info,
     "atomization-energy": energy_info,
     "adsorption-energy": energy_info,
+    "energy-above-hull": energy_info,
     "formation-energy": energy_info,
     "band-gap": energy_info,
 }
@@ -106,7 +107,7 @@ def atomic_forces_to_schema(af_prop: dict):
     if af_prop.get("forces") is None:
         return {}
     af_dict = {
-        "atomic_forces_00": af_prop["forces"]["source-value"],
+        "atomic_forces": af_prop["forces"]["source-value"],
         "atomic_forces_unit": af_prop["forces"]["source-unit"],
     }
     return af_dict
@@ -262,26 +263,7 @@ class Property(dict):
             for k in property_object_schema.fieldNames()
             if k not in _hash_ignored_fields
         ]
-        # self.unique_identifier_kw = [
-        #     "adsorption_energy",
-        #     "atomic_forces_00",
-        #     "atomization_energy",
-        #     "cauchy_stress",
-        #     "cauchy_stress_volume_normalized",
-        #     "chemical_formula_hill",
-        #     "configuration_id",
-        #     "dataset_id",
-        #     "electronic_band_gap",
-        #     "electronic_band_gap_type",
-        #     "energy",
-        #     "formation_energy",
-        #     "metadata_id",
-        #     "method",
-        #     "software",
-        # ]
-        self.unique_identifier_kw.extend(
-            [f"atomic_forces_{i:02d}" for i in range(1, 20)]
-        )
+
         self.instance = instance
         self.definitions = definitions
         self.nsites = nsites
@@ -562,8 +544,8 @@ class Property(dict):
         row_dict["chemical_formula_hill"] = self.chemical_formula_hill
         row_dict["multiplicity"] = 1
         row_dict["dataset_id"] = self.dataset_id
-        if row_dict["atomic_forces_00"] is not None:
-            norms = [np.linalg.norm(f) for f in row_dict["atomic_forces_00"]]
+        if row_dict["atomic_forces"] is not None:
+            norms = [np.linalg.norm(f) for f in row_dict["atomic_forces"]]
             row_dict["max_force_norm"] = float(np.max(norms))
             row_dict["mean_force_norm"] = float(np.mean(norms))
         return row_dict
