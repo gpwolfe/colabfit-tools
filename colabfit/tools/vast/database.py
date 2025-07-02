@@ -1361,7 +1361,7 @@ class S3FileManager:
 def generate_ds_id():
     # Maybe check to see whether the DS ID already exists?
     ds_id = ID_FORMAT_STRING.format("DS", generate_string(), 0)
-    logger.info("Generated new DS ID:", ds_id)
+    logger.info(f"Generated new DS ID: {ds_id}")
     return ds_id
 
 
