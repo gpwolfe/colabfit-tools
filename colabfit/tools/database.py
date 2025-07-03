@@ -1533,6 +1533,107 @@ class DataManager:
             with conn.cursor() as curs:
                 curs.execute(sql)
 
+    def create_pg_code_table(self):
+        sql = """
+        CREATE TABLE dataset_code_specific_parameters (
+            id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            dataset_id character varying NOT NULL,
+            code_specific_inputs jsonb NOT NULL,
+            "timestamp" timestamp without time zone DEFAULT now() NOT NULL
+        );
+        """
+        with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password) as conn:
+            with conn.cursor() as curs:
+                curs.execute(sql)
+
+    def create_pg_univ_table(self):
+        sql = """
+        CREATE TABLE parameter_definition (
+            id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            name text NOT NULL UNIQUE,
+            description text,
+            data_type integer NOT NULL REFERENCES data_type(datatype_id)
+        );
+
+        INSERT INTO parameter_definition (id, name, description, data_type) VALUES
+            (1, 'code', 'Which software is being used for the calculation', 3),
+            (2, 'version', 'Version of the code used', 3),
+            (3, 'executable_path', 'Absolute path to the binary', 3),
+            (4, 'xc', 'Which exchange correlation functional used', 3),
+            (5, 'planewave_cutoff', 'Planewave cutoff for the code', 1),
+            (7, 'kspacing', 'Kspacing in reciprocal space (Not multiplied by 2pi)', 2),
+            (10, 'smearing_value', 'Value for smearing', 2),
+            (11, 'energy_convergence', 'Energy convergence value', 2),
+            (12, 'force_convergence', 'Force convergence', 2),
+            (13, 'spin_mode', 'Type of spin calculation', 3),
+            (15, 'pseudopotential_library', 'Pseudopotential library being used in simulation', 3),
+            (16, 'ion_relax', 'Ionic optimization', 4),
+            (17, 'cell_relax', 'Cell optimization', 4),
+            (18, 'mixing_mode', 'Electronic mixing method', 3),
+            (19, 'mixing_value', 'Electronic mixing value', 2),
+            (20, 'vdw_correction', 'Type of Van der Waals correction', 3),
+            (21, 'hubbard_method', 'Methodology for applying Hubbard U corrections (Default to Dudarev)', 3),
+            (22, 'hubbard_orbitals', 'Set which l-quantum number the correction is applied', 1),
+            (23, 'hubbard_u', 'Hubbard U correction value', 2),
+            (24, 'hubbard_j', 'Hubbard J correction value', 2),
+            (14, 'diagonalization_method', 'Diagonalization method', 3),
+            (26, 'magnetic_moments', 'Magnetic moments for each atom', 3),
+            (27, 'ion_optimization_method', 'Method for optimizing ions', 3),
+            (9, 'smearing_method', 'Type of smearing', 3);
+        """
+        with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password) as conn:
+            with conn.cursor() as curs:
+                curs.execute(sql)
+
+    def create_pg_param_def_table(self):
+        sql = """
+        CREATE TABLE parameter_definition (
+        id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        name text NOT NULL UNIQUE,
+        description text,
+        data_type integer NOT NULL,
+        CONSTRAINT parameter_definition_data_type_fk FOREIGN KEY (data_type)
+            REFERENCES data_type(datatype_id)
+        );
+        """
+        with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password) as conn:
+            with conn.cursor() as curs:
+                curs.execute(sql)
+
+    def create_pg_data_type_table(self):
+        sql = """
+        CREATE TABLE data_type (
+            datatype_id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            datatype_name varchar NOT NULL UNIQUE,
+            description text
+        );
+
+        INSERT INTO data_type (datatype_id, datatype_name, description) VALUES
+            (1, 'Integer', 'Whole numbers'),
+            (2, 'Float', 'Decimal numbers'),
+            (3, 'String', 'Text or characters'),
+            (4, 'Bool', 'Boolean (True or False)'),
+            (5, 'JSON', 'JSON object');
+        """
+        with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password) as conn:
+            with conn.cursor() as curs:
+                curs.execute(sql)
+
+    def create_pg_tables(self):
+        """
+        Single function to create all the tables needed for the colabfit
+        database.
+        """
+
+        self.create_pg_ds_table()
+        self.create_pg_co_table()
+        self.create_pg_po_table()
+        self.create_pg_pd_table()
+        self.create_pg_data_type_table()
+        self.create_pg_param_def_table()
+        self.create_pg_code_table()
+        self.create_pg_univ_table()
+
     def insert_property_definition(self, property_dict):
         # TODO: try except that property_dict must be jsonable
 
