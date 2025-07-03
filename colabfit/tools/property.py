@@ -144,6 +144,8 @@ def md_from_map(pmap_md, config: AtomicConfiguration) -> tuple:
     Extract metadata from a property map.
     Returns metadata dict as a JSON string..
     """
+    if isinstance(pmap_md, list):
+        pmap_md = pmap_md[0]
     gathered_fields = {}
     for md_field in pmap_md.keys():
         if "value" in pmap_md[md_field]:
