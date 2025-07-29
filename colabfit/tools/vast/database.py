@@ -45,7 +45,6 @@ from colabfit.tools.vast.schema import (
     configuration_set_schema,
     dataset_arr_schema,
     dataset_schema,
-    property_object_arr_schema,
 )
 from colabfit.tools.vast.utilities import (
     _hash,
