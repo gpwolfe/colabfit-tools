@@ -1,11 +1,3 @@
-"""
-Schema definitions for VAST data structures used in ColabFit.
-This module defines the schemas for configurations, property objects, datasets,
-configuration sets, and their metadata. These schemas are used to structure
-and validate data within the VAST framework, ensuring consistency and
-integrity across various data operations.
-"""
-
 from pyspark.sql.types import (
     ArrayType,
     BooleanType,
@@ -18,9 +10,61 @@ from pyspark.sql.types import (
     TimestampType,
 )
 
+from colabfit.tools.vast.utils import get_stringified_schema
+
 NSITES_COL_SPLITS = 20
 
-config_arr_schema = StructType(
+config_prop_schema = StructType(
+    [
+        StructField("hash", StringType(), True),
+        StructField("property_id", StringType(), True),
+        StructField("property_hash", StringType(), True),
+        StructField("last_modified", TimestampType(), True),
+        StructField("dataset_id", StringType(), True),
+        StructField("multiplicity", IntegerType(), True),
+        StructField("software", StringType(), True),
+        StructField("method", StringType(), True),
+        StructField("energy", DoubleType(), True),
+        StructField("atomic_forces", ArrayType(ArrayType(DoubleType())), True),
+        StructField("cauchy_stress", ArrayType(ArrayType(DoubleType())), True),
+        StructField("cauchy_stress_volume_normalized", BooleanType(), True),
+        StructField("electronic_band_gap", DoubleType(), True),
+        StructField("electronic_band_gap_type", StringType(), True),
+        StructField("formation_energy", DoubleType(), True),
+        StructField("adsorption_energy", DoubleType(), True),
+        StructField("atomization_energy", DoubleType(), True),
+        StructField("max_force_norm", DoubleType(), True),
+        StructField("mean_force_norm", DoubleType(), True),
+        StructField("energy_above_hull", DoubleType(), True),
+        StructField("configuration_id", StringType(), True),
+        StructField("configuration_hash", StringType(), True),
+        StructField("structure_hash", StringType(), True),
+        StructField("cell", ArrayType(ArrayType(DoubleType())), True),
+        StructField("positions", ArrayType(ArrayType(DoubleType())), True),
+        StructField("pbc", ArrayType(BooleanType()), True),
+        StructField("chemical_formula_hill", StringType(), True),
+        StructField("chemical_formula_reduced", StringType(), True),
+        StructField("chemical_formula_anonymous", StringType(), True),
+        StructField("elements", ArrayType(StringType()), True),
+        StructField("elements_ratios", ArrayType(DoubleType()), True),
+        StructField("atomic_numbers", ArrayType(IntegerType()), True),
+        StructField("nsites", IntegerType(), True),
+        StructField("nelements", IntegerType(), True),
+        StructField("nperiodic_dimensions", IntegerType(), True),
+        StructField("dimension_types", ArrayType(IntegerType()), True),
+        StructField("names", ArrayType(StringType()), True),
+        StructField("labels", ArrayType(StringType()), True),
+        StructField("property_metadata_path", StringType(), True),
+        StructField("configuration_metadata_path", StringType(), True),
+    ]
+)
+config_prop_str_schema = get_stringified_schema(config_prop_schema)
+config_prop_md_schema = StructType([field for field in config_prop_schema])
+config_prop_md_schema.add(StructField("configuration_metadata", StringType(), True)).add(
+    StructField("property_metadata", StringType(), True)
+)
+
+config_schema = StructType(
     [
         StructField("id", StringType(), True),
         StructField("hash", StringType(), True),
@@ -47,12 +91,12 @@ config_arr_schema = StructType(
         StructField("positions", ArrayType(ArrayType(DoubleType())), True),
     ]
 )
-config_md_schema = StructType([field for field in config_arr_schema])
+config_md_schema = StructType([field for field in config_schema])
 config_md_schema.add(StructField("metadata", StringType(), True))
-config_row_id_schema = StructType([field for field in config_arr_schema])
+config_row_id_schema = StructType([field for field in config_schema])
 config_row_id_schema.add(StructField("$row_id", LongType(), True))
 
-property_object_arr_schema = StructType(
+property_object_schema = StructType(
     [
         StructField("id", StringType(), True),
         StructField("hash", StringType(), True),
@@ -81,14 +125,13 @@ property_object_arr_schema = StructType(
     ]
 )
 
-property_object_md_schema = StructType([field for field in property_object_arr_schema])
+property_object_md_schema = StructType([field for field in property_object_schema])
 property_object_md_schema.add(StructField("metadata", StringType(), True))
-property_object_row_id_schema = StructType(
-    [field for field in property_object_arr_schema]
-)
+property_object_row_id_schema = StructType([field for field in property_object_schema])
 property_object_row_id_schema.add(StructField("$row_id", LongType(), True))
 
-dataset_arr_schema = StructType(
+
+dataset_schema = StructType(
     [
         StructField("id", StringType(), True),
         StructField("hash", StringType(), True),
@@ -120,11 +163,15 @@ dataset_arr_schema = StructType(
         StructField("publication_year", StringType(), True),
         StructField("doi", StringType(), True),
         StructField("equilibrium", BooleanType(), True),
-        # StructField("labels", ArrayType(StringType()), True),
+        StructField("methods", ArrayType(StringType()), True),
+        StructField("software", ArrayType(StringType()), True),
+        StructField("date_added_to_colabfit", TimestampType(), True),
+        StructField("date_requested", TimestampType(), True),
     ]
 )
 
-configuration_set_arr_schema = StructType(
+
+configuration_set_schema = StructType(
     [
         StructField("id", StringType(), True),
         StructField("hash", StringType(), True),
@@ -143,6 +190,7 @@ configuration_set_arr_schema = StructType(
         StructField("extended_id", StringType(), True),
     ]
 )
+
 
 co_cs_map_schema = StructType(
     [

@@ -1,98 +1,116 @@
 import logging
+from datetime import datetime
 
 import pyspark.sql.functions as sf
 from unidecode import unidecode
 
 from colabfit import MAX_STRING_LENGTH
-from colabfit.tools.vast.schema import dataset_arr_schema
-from colabfit.tools.vast.utilities import (
+from colabfit.tools.vast.schema import dataset_schema
+from colabfit.tools.vast.data_object import DataObject
+from colabfit.tools.vast.utils import (
     ELEMENT_MAP,
     _empty_dict_from_schema,
-    _hash,
+    get_date,
     get_last_modified,
 )
 
 logger = logging.getLogger(__name__)
 
 
-class Dataset:
+class Dataset(DataObject):
     """
-    Dataset class for aggregating configurations and computed properties.
+    Represents a dataset that aggregates configuration sets and computed properties,
+    along with associated metadata and aggregated statistics.
 
-    A Dataset defines a group of configurations and their associated computed
-    properties, aggregating relevant metadata and statistics about these
-    configurations and properties.
+    A Dataset object is used to organize and summarize information about a collection
+    of configuration sets and their computed properties, including authorship,
+    publication links, licensing, and various aggregated statistics derived from the
+    data.
 
+    Parameters
+    ----------
     name : str
         The name of the dataset.
-    authors : list[str]
-        List of author names (last names must contain only alphabetic characters).
+    authors : list of str
     publication_link : str
-        URL to the source publication describing the dataset.
+        Link to the publication associated with the dataset.
     data_link : str
-        URL to the source data.
+        Link to the source data for the dataset.
     description : str
-        Description of the dataset.
     config_df : pyspark.sql.DataFrame
-        DataFrame containing configuration information.
-    prop_df : pyspark.sql.DataFrame
-        DataFrame containing computed property information.
-    other_links : list[str], optional
-        Additional relevant links (default: None).
+        DataFrame containing configuration set information.
+    other_links : list of str, optional
+        Additional external links related to the dataset (default: None).
     dataset_id : str, optional
         Unique identifier for the dataset (default: None).
-    labels : list[str], optional
-        List of labels or tags for the dataset (default: None).
+    labels : list of str, optional
+        List of labels associated with the dataset (default: None).
     doi : str, optional
         Digital Object Identifier for the dataset (default: None).
-    configuration_set_ids : list[str], optional
-        List of configuration set IDs included in the dataset (default: []).
+    configuration_set_ids : list of str, optional
+        List of configuration set IDs attached to the dataset (default: []).
     data_license : str, optional
-        License under which the data is released (default: "CC-BY-ND-4.0").
+        License associated with the dataset's data (default: "CC-BY-ND-4.0").
     publication_year : str, optional
-        Year of publication (default: None).
-    equilibrium : bool, optional
-        Whether the dataset contains equilibrium configurations (default: False).
+        Year of publication for the dataset (default: None).
 
     Attributes
+    ----------
     name : str
-        Name of the dataset.
-    authors : list[str]
-        List of author names.
+        The name of the dataset.
+    authors : list of str
     publication_link : str
-        Source publication URL.
+        Link to the publication associated with the dataset.
     data_link : str
-        Source data URL.
-    other_links : list[str]
-        Additional links.
+        Link to the source data for the dataset.
+    other_links : list of str or None
+        Additional external links related to the dataset.
     description : str
-        Dataset description.
     data_license : str
-        Data license.
-    dataset_id : str
-        Dataset unique identifier.
-    doi : str
-        Digital Object Identifier.
-    publication_year : str
-        Year of dataset publication.
-    configuration_set_ids : list[str]
-        List of configuration set IDs.
-    equilibrium : bool
-        True indicates the dataset contains only equilibrium configurations.
+        License associated with the dataset's data.
+    dataset_id : str or None
+        Unique identifier for the dataset.
+    doi : str or None
+        Digital Object Identifier for the dataset.
+    publication_year : str or None
+        Year of publication for the dataset.
+    configuration_set_ids : list of str
+        List of configuration set IDs attached to the dataset.
     row_dict : dict
-        Dict in format for insertion into a Spark DataFrame.
-    _hash : str
-        Hash of the dataset.
+        Dictionary containing aggregated statistics and metadata for the dataset,
+        appropriate for use in a Spark DataFrame, Vast DB table or similar.
+        Includes:
+            - nconfigurations: Number of configurations.
+            - nsites: Total number of sites.
+            - nelements: Number of unique elements.
+            - elements: List of unique elements.
+            - nperiodic_dimensions: Distinct periodic dimensions.
+            - dimension_types: Distinct dimension types.
+            - total_elements_ratios: Ratios of each element in the dataset.
+            - nproperty_objects: Number of property objects.
+            - Various property counts and statistics.
+            - dataset authors
+            - dataset description
+            - dataset license
+            - links to publication, data, and resources associated with the dataset.
+            - dataset name
+            - dataset publication_year
+            - doi: Digital Object Identifier for the dataset.
+    labels : list of str or None
+        List of labels associated with the dataset.
 
     Methods
     -------
-    to_row_dict(config_df, prop_df)
-        Aggregates configuration and property DataFrames into a metadata dictionary.
-    __str__()
-        Returns a string representation of the Dataset.
-    __repr__()
-        Returns a string representation of the Dataset.
+    to_row_dict(config_df)
+        Aggregates statistics and metadata from the configuration DataFrame
+        into a dictionary representation suitable for use in a Spark DataFrame, Vast DB
+        table or similar.
 
+    __str__()
+        Returns a string summary of the dataset.
+
+    __repr__()
+        Returns a string representation of the dataset.
     """
 
     def __init__(
@@ -103,13 +121,13 @@ class Dataset:
         data_link: str,
         description: str,
         config_df,
-        prop_df,
         other_links: list[str] = None,
         dataset_id: str = None,
         labels: list[str] = None,
         doi: str = None,
         configuration_set_ids: list[str] = [],
-        data_license: str = "CC-BY-ND-4.0",
+        data_license: str = None,
+        date_requested: str = None,
         publication_year: str = None,
         equilibrium: bool = False,
     ):
@@ -119,7 +137,9 @@ class Dataset:
                     f"Bad author name '{auth}'. Author names "
                     "can only contain [a-z][A-Z]"
                 )
-
+        for required in (date_requested, data_license, publication_year, dataset_id):
+            if not required:
+                raise RuntimeError(f"Missing required field {required}")
         self.name = name
         self.authors = authors
         self.publication_link = publication_link
@@ -129,13 +149,16 @@ class Dataset:
         self.data_license = data_license
         self.dataset_id = dataset_id
         self.doi = doi
+        assert datetime.strptime(publication_year, "%Y")
         self.publication_year = publication_year
         self.configuration_set_ids = configuration_set_ids
         self.equilibrium = equilibrium
         if self.configuration_set_ids is None:
             self.configuration_set_ids = []
-        self.row_dict = self.to_row_dict(config_df=config_df, prop_df=prop_df)
-        self.row_dict["id"] = self.dataset_id
+        self.row_dict = self.to_row_dict(config_df=config_df)
+        self.row_dict["date_added_to_colabfit"] = get_date()
+        assert datetime.strptime(date_requested, "%Y-%m-%d")
+        self.row_dict["date_requested"] = datetime.strptime(date_requested, "%Y-%m-%d")
         id_prefix = "__".join(
             [
                 self.name,
@@ -147,30 +170,28 @@ class Dataset:
             logger.warning(f"ID prefix is too long. Clipping to {id_prefix}")
         extended_id = f"{id_prefix}__{dataset_id}"
         self.row_dict["extended_id"] = extended_id
-        self._hash = _hash(self.row_dict, ["extended_id"])
-        self.row_dict["hash"] = str(self._hash)
+        self._generate_hash_and_id()
+        self.row_dict["id"] = self.dataset_id
         self.row_dict["labels"] = labels
         logger.info(self.row_dict)
 
-    def to_row_dict(self, config_df, prop_df):
-        """
-        Convert Dataset into dict appropriate for insertion into a Spark DataFrame.
-        """
-        row_dict = _empty_dict_from_schema(dataset_arr_schema)
+    def get_identifier_keys(self) -> list[str]:
+        """Return the keys used for Dataset identification."""
+        return ["extended_id"]
+
+    def to_row_dict(self, config_df):
+        """"""
+        row_dict = _empty_dict_from_schema(dataset_schema)
         row_dict["last_modified"] = get_last_modified()
         row_dict["nconfiguration_sets"] = len(self.configuration_set_ids)
         config_df = config_df.select(
-            "id",
+            "property_id",
+            "configuration_id",
             "elements",
             "atomic_numbers",
             "nsites",
             "nperiodic_dimensions",
             "dimension_types",
-            # "labels",
-        )
-
-        prop_df = prop_df.select(
-            "id",
             "atomization_energy",
             "atomic_forces",
             "adsorption_energy",
@@ -179,45 +200,57 @@ class Dataset:
             "cauchy_stress",
             "formation_energy",
             "energy",
+            "method",
+            "software",
         )
 
-        # int_array_cols = ["atomic_numbers", "dimension_types"]
-        # str_array_cols = ["elements"]
-        # config_df = config_df.select(
-        #     [
-        #         (
-        #             str_to_arrayof_int(sf.col(col)).alias(col)
-        #             if col in int_array_cols
-        #             else col
-        #         )
-        #         for col in config_df.columns
-        #     ]
-        # ).select(
-        #     [
-        #         (
-        #             str_to_arrayof_str(sf.col(col)).alias(col)
-        #             if col in str_array_cols
-        #             else col
-        #         )
-        #         for col in config_df.columns
-        #     ]
-        # )
-        config_df.cache()
-        agg_df = config_df.agg(
-            sf.count_distinct("id").alias("nconfigurations"),
-            sf.sum("nsites").alias("nsites"),
-            sf.collect_set("nperiodic_dimensions").alias("nperiodic_dimensions"),
-            sf.collect_set("dimension_types").alias("dimension_types"),
-            sf.flatten(sf.collect_set("elements")).alias("elements"),
+        int_array_cols = ["atomic_numbers", "dimension_types"]
+        str_array_cols = ["elements"]
+        config_df = config_df.select(
+            [
+                (
+                    str_to_arrayof_int(sf.col(col)).alias(col)
+                    if col in int_array_cols
+                    else (
+                        str_to_arrayof_str(sf.col(col)).alias(col)
+                        if col in str_array_cols
+                        else col
+                    )
+                )
+                for col in config_df.columns
+            ]
         )
-        agg_row = agg_df.collect()[0]
-        row_dict["nconfigurations"] = agg_row["nconfigurations"]
-        row_dict["nsites"] = agg_row["nsites"]
-        row_dict["nperiodic_dimensions"] = agg_row["nperiodic_dimensions"]
-        row_dict["dimension_types"] = agg_row["dimension_types"]
-        row_dict["elements"] = sorted(list(set(agg_row["elements"])))
+        config_df.persist()
+        row_dict["nconfigurations"] = (
+            config_df.select("configuration_id").distinct().count()
+        )
+        row_dict["nsites"] = (
+            config_df.select("nsites").agg(sf.sum("nsites")).collect()[0][0]
+        )
+        nperiodic_dims = config_df.select("nperiodic_dimensions").distinct().collect()
+        row_dict["nperiodic_dimensions"] = [
+            row["nperiodic_dimensions"] for row in nperiodic_dims
+        ]
+        dim_types = config_df.select("dimension_types").distinct().collect()
+        row_dict["dimension_types"] = [row["dimension_types"] for row in dim_types]
+
+        methods = config_df.select("method").distinct().collect()
+        row_dict["methods"] = [row["method"] for row in methods]
+
+        software = config_df.select("software").distinct().collect()
+        row_dict["software"] = [row["software"] for row in software]
+
+        elements_df = config_df.select("elements").distinct()
+        elements = []
+        for row in elements_df.collect():
+            elem_list = (
+                row["elements"]
+                if isinstance(row["elements"], list)
+                else [row["elements"]]
+            )
+            elements.extend(elem_list)
+        row_dict["elements"] = sorted(list(set(elements)))
         row_dict["nelements"] = len(row_dict["elements"])
-
         atomic_ratios_df = (
             config_df.select("atomic_numbers")
             .withColumn("single_element", sf.explode("atomic_numbers"))
@@ -249,25 +282,42 @@ class Dataset:
         row_dict["total_elements_ratios"] = [
             x["ratio"] for x in sorted(atomic_ratios_coll, key=lambda x: x["element"])
         ]
-        config_df.unpersist()
+        del atomic_ratios_df, atomic_ratios_coll
 
-        count_df = prop_df.agg(
-            sf.count_distinct("id").alias("nproperty_objects"),
-            sf.count("atomization_energy").alias("atomization_energy_count"),
-            sf.count("adsorption_energy").alias("adsorption_energy_count"),
-            sf.count("electronic_band_gap").alias("electronic_band_gap_count"),
-            sf.count("cauchy_stress").alias("cauchy_stress_count"),
-            sf.count("energy_above_hull").alias("energy_above_hull_count"),
-            sf.count("formation_energy").alias("formation_energy_count"),
-            sf.count("energy").alias("energy_count"),
-            sf.variance("energy").alias("energy_variance"),
-            sf.mean("energy").alias("energy_mean"),
-            sf.count_if(
-                (sf.col("atomic_forces") != "[]") & (sf.col("atomic_forces").isNotNull())
-            ).alias("atomic_forces_count"),
+        row_dict["nproperty_objects"] = (
+            config_df.select("property_id").distinct().count()
         )
-        count_row = count_df.collect()[0].asDict()
-        row_dict.update(count_row)
+        property_counts = {}
+        property_cols = [
+            "atomization_energy",
+            "adsorption_energy",
+            "electronic_band_gap",
+            "cauchy_stress",
+            "energy_above_hull",
+            "formation_energy",
+            "energy",
+        ]
+        for prop_col in property_cols:
+            count = (
+                config_df.select(prop_col).filter(sf.col(prop_col).isNotNull()).count()
+            )
+            property_counts[f"{prop_col}_count"] = count
+        atomic_forces_count = config_df.filter(
+            (sf.col("atomic_forces") != "[]") & (sf.col("atomic_forces").isNotNull())
+        ).count()
+        property_counts["atomic_forces_count"] = atomic_forces_count
+        energy_stats = (
+            config_df.select("energy")
+            .filter(sf.col("energy").isNotNull())
+            .agg(
+                sf.variance("energy").alias("energy_variance"),
+                sf.mean("energy").alias("energy_mean"),
+            )
+            .collect()[0]
+        )
+        property_counts["energy_variance"] = energy_stats["energy_variance"]
+        property_counts["energy_mean"] = energy_stats["energy_mean"]
+        row_dict.update(property_counts)
         row_dict["authors"] = self.authors
         row_dict["description"] = self.description
         row_dict["license"] = self.data_license
@@ -282,6 +332,8 @@ class Dataset:
         row_dict["publication_year"] = self.publication_year
         row_dict["doi"] = self.doi
         row_dict["equilibrium"] = self.equilibrium
+        config_df.unpersist()
+        del config_df
         return row_dict
 
     def __str__(self):
