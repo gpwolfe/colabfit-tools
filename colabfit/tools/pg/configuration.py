@@ -4,11 +4,12 @@ import numpy as np
 from ase import Atoms
 
 from colabfit import ATOMS_LABELS_FIELD, ATOMS_NAME_FIELD
-from colabfit.tools.pg.schema import config_schema
+from colabfit.tools.pg.schema import config_md_schema
 from colabfit.tools.pg.utilities import (
     _empty_dict_from_schema,
     _hash,
     _parse_unstructured_metadata,
+    config_struct_hash,
     get_last_modified,
 )
 
@@ -42,10 +43,16 @@ class AtomicConfiguration(Atoms):
                 Other keyword arguments that can be passed to
                 :meth:`ase.Atoms.__init__()`
         """
-        if ATOMS_NAME_FIELD in info:
-            names = info[ATOMS_NAME_FIELD]
-        else:
-            names = None
+        if not isinstance(info, dict):
+            raise TypeError(f"info must be a dict, got {type(info)}")
+        if ATOMS_NAME_FIELD not in info:
+            raise ValueError(
+                f"info must contain '{ATOMS_NAME_FIELD}'. "
+                "Set info['{ATOMS_NAME_FIELD}'] to a name for this configuration."
+            )
+
+        names = info[ATOMS_NAME_FIELD]
+
         if "atomic_numbers" in list(kwargs.keys()):
             kwargs["numbers"] = kwargs.pop("atomic_numbers")
 
@@ -76,12 +83,11 @@ class AtomicConfiguration(Atoms):
         else:
             self.labels = labels
         self.row_dict = self.to_row_dict()
-        self._hash = hash(self)
-        self.id = f"CO_{self._hash}"
+        self._hash = _hash(self.row_dict, sorted(self.unique_identifier_kw), False)
+        self.id = f"CO_{self._hash[:25]}"
 
         self.row_dict["id"] = self.id
-        self.row_dict["hash"] = str(self._hash)
-        self.row_dict = self.row_dict
+        self.row_dict["hash"] = self._hash
         # Check for name conflicts in info/arrays; would cause bug in parsing
         if set(self.info.keys()).intersection(set(self.arrays.keys())):
             raise RuntimeError(
@@ -223,7 +229,7 @@ class AtomicConfiguration(Atoms):
         self.row_dict["dataset_ids"] = [dataset_id]
 
     def to_row_dict(self):
-        co_dict = _empty_dict_from_schema(config_schema)
+        co_dict = _empty_dict_from_schema(config_md_schema)
         co_dict["cell"] = self.cell.array.astype(float).tolist()
         co_dict["positions"] = self.positions.astype(float).tolist()
         co_dict["names"] = self.names
@@ -233,8 +239,13 @@ class AtomicConfiguration(Atoms):
         co_dict["pbc"] = pbc.astype(bool).tolist()
         co_dict["last_modified"] = get_last_modified()
         co_dict["atomic_numbers"] = self.numbers.astype(int).tolist()
-        # if self.metadata is not None:
-        #    co_dict.update(self.metadata)
+        co_dict["structure_hash"] = config_struct_hash(
+            self.numbers.astype(int).tolist(),
+            self.cell.array.astype(float).tolist(),
+            pbc.tolist(),
+            self.positions.astype(float).tolist(),
+        )
+        co_dict["metadata"] = self.metadata.get("metadata") if self.metadata else None
         co_dict.update(self.configuration_summary())
         return co_dict
 
@@ -304,7 +315,7 @@ class AtomicConfiguration(Atoms):
         * :code:`dimension_types`: the set of all periodic boundary choices
 
         Args:
-            db (:code:`MongoDatabase` object):
+            db (:class:`~colabfit.tools.pg.database.DataManager`):
                 Database client in which to search for dataset-ID
             co_hashes (list of str):
                 List of hashes of configurations to aggregate. /
@@ -314,7 +325,9 @@ class AtomicConfiguration(Atoms):
         Returns:
             dict: Aggregated Configuration information
         """
-        return NotImplementedError
+        raise NotImplementedError(
+            "aggregate_configuration_summaries not implemented for PG backend"
+        )
 
     def __str__(self):
         ase_str = super().__str__()
@@ -323,4 +336,4 @@ class AtomicConfiguration(Atoms):
         )
 
     def __hash__(self):
-        return _hash(self.row_dict, sorted(self.unique_identifier_kw), False)
+        return int(_hash(self.row_dict, sorted(self.unique_identifier_kw), False), 16)

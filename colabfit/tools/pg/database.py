@@ -1,19 +1,16 @@
 import hashlib
 import itertools
 import json
+import logging
+import secrets
 import string
 from functools import partial
 from itertools import islice
 from multiprocessing import Pool
-from pathlib import Path
-from time import time
 from types import GeneratorType
 
-import boto3
 import psycopg
 from ase import Atoms
-from botocore.exceptions import ClientError
-from django.utils.crypto import get_random_string
 from psycopg import sql
 from psycopg.rows import dict_row
 from tqdm import tqdm
@@ -25,12 +22,10 @@ from colabfit.tools.pg.dataset import Dataset
 from colabfit.tools.pg.property import Property
 from colabfit.tools.pg.schema import (
     config_md_schema,
-    config_schema,
     configuration_set_schema,
     dataset_schema,
     property_definition_schema,
     property_object_md_schema,
-    property_object_schema,
 )
 from colabfit.tools.pg.utilities import get_last_modified
 
@@ -40,7 +35,13 @@ NSITES_COL_SPLITS = 20
 
 
 def generate_string():
-    return get_random_string(12, allowed_chars=string.ascii_lowercase + "1234567890")
+    alphabet = string.ascii_lowercase + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(12))
+
+
+def generate_ds_id():
+    ds_id = ID_FORMAT_STRING.format("DS", generate_string(), 0)
+    return ds_id
 
 
 def batched(configs, n):
@@ -73,15 +74,19 @@ class DataManager:
             port (int): Port number.
             host (str): Host name.
             password (str): Password.
-            nprocs (int): Number of processes to use if using multiprocessing
-                (i.e. while reading data files).
+            nprocs (int): Number of processes to use for multiprocessing.
             standardize_energy (bool): Whether to standardize energy.
             read_write_batch_size (int): Batch size for reading and writing data.
         """
+        if not isinstance(port, int):
+            raise TypeError(f"port must be an int, got {type(port)}")
+        if not isinstance(read_write_batch_size, int) or read_write_batch_size <= 0:
+            raise ValueError(
+                f"read_write_batch_size must be a positive int, got {read_write_batch_size!r}"
+            )
         self.dbname = dbname
         self.user = user
         self.port = port
-        self.user = user
         self.password = password
         self.host = host
         self.read_write_batch_size = read_write_batch_size
@@ -96,12 +101,11 @@ class DataManager:
         dataset_id,
         standardize_energy: bool = True,
     ):
-        """Convert COs and DOs to Spark rows."""
+        """Convert COs and POs to row dicts."""
         co_po_rows = []
         for config in configs:
             config.set_dataset_id(dataset_id)
-            # TODO: Add PO schema as input to this method so to_row_dict works better
-            property = Property.from_definition(
+            property_ = Property.from_definition(
                 definitions=prop_defs,
                 configuration=config,
                 property_map=prop_map,
@@ -110,7 +114,7 @@ class DataManager:
             co_po_rows.append(
                 (
                     config.row_dict,
-                    property.row_dict,
+                    property_.row_dict,
                 )
             )
         return co_po_rows
@@ -122,12 +126,7 @@ class DataManager:
         dataset_id=None,
         prop_map=None,
     ):
-        """
-        Wrapper for _gather_co_po_rows.
-        Convert COs and DOs to Spark rows using multiprocessing Pool.
-        Returns a batch of tuples of (configuration_row, property_row).
-        """
-
+        """Wrapper for _gather_co_po_rows using multiprocessing Pool."""
         if dataset_id is None:
             dataset_id = generate_ds_id()
 
@@ -141,11 +140,8 @@ class DataManager:
         return itertools.chain.from_iterable(pool.map(part_gather, list(config_chunks)))
 
     def gather_co_po_in_batches(self, configs, dataset_id=None, prop_map=None):
-        """
-        Wrapper function for gather_co_po_rows_pool.
-        Yields batches of CO-DO rows, preventing configuration iterator from
-        being consumed all at once.
-        """
+        """Yields batches of CO-PO row dicts, preventing configs from being consumed
+        all at once."""
         chunk_size = 1000
         config_chunks = batched(configs, chunk_size)
         with Pool(self.nprocs) as pool:
@@ -160,33 +156,9 @@ class DataManager:
                         )
                     )
 
-    def load_data_loader_call(self, loader):
-        """Load data to PostgreSQL in batches."""
-        co_po_rows = self.gather_co_po_in_batches()
-
-        for co_po_batch in tqdm(
-            co_po_rows,
-            desc="Loading data to database: ",
-            unit="batch",
-        ):
-            co_rows, po_rows = list(zip(*co_po_batch))
-            if len(co_rows) == 0:
-                continue
-            else:
-                loader.write_table(
-                    co_rows,
-                    loader.config_table,
-                    config_schema,
-                )
-                loader.write_table(
-                    po_rows,
-                    loader.prop_object_table,
-                    property_object_schema,
-                )
-
     @staticmethod
     def get_co_sql():
-        columns = [x.name for x in config_md_schema.columns]
+        columns = config_md_schema.column_names
         sql_compose = sql.SQL(" ").join(
             [
                 sql.SQL("INSERT INTO"),
@@ -194,7 +166,7 @@ class DataManager:
                 sql.SQL("("),
                 sql.SQL(",").join(map(sql.Identifier, columns)),
                 sql.SQL(") VALUES ("),
-                sql.SQL(",").join(sql.Placeholder() * len(columns)),
+                sql.SQL(",").join([sql.Placeholder()] * len(columns)),
                 sql.SQL(")"),
                 sql.SQL("ON CONFLICT (hash) DO UPDATE SET"),
                 sql.Identifier("dataset_ids"),
@@ -215,7 +187,7 @@ class DataManager:
 
     @staticmethod
     def get_po_sql():
-        columns = [x.name for x in property_object_md_schema.columns]
+        columns = property_object_md_schema.column_names
         sql_compose = sql.SQL(" ").join(
             [
                 sql.SQL("INSERT INTO"),
@@ -223,7 +195,7 @@ class DataManager:
                 sql.SQL("("),
                 sql.SQL(",").join(map(sql.Identifier, columns)),
                 sql.SQL(") VALUES ("),
-                sql.SQL(",").join(sql.Placeholder() * len(columns)),
+                sql.SQL(",").join([sql.Placeholder()] * len(columns)),
                 sql.SQL(")"),
                 sql.SQL(
                     "ON CONFLICT (hash) DO UPDATE SET multiplicity = {}.multiplicity + 1;"
@@ -236,24 +208,26 @@ class DataManager:
     def co_row_to_values(row_dict):
         name = row_dict["names"][0]
         dataset_id = row_dict["dataset_ids"][0]
-        vals = [row_dict.get(k) for k in config_md_schema.columns]
+        vals = [row_dict.get(k) for k in config_md_schema.column_names]
+        assert len(vals) == len(config_md_schema.column_names), (
+            f"CO column count mismatch: {len(vals)} vals for "
+            f"{len(config_md_schema.column_names)} columns"
+        )
         vals.append(dataset_id)
         vals.append(name)
         return vals
 
     @staticmethod
     def po_row_to_values(row_dict):
-        vals = [row_dict.get(k) for k in property_object_md_schema.columns]
+        vals = [row_dict.get(k) for k in property_object_md_schema.column_names]
+        assert len(vals) == len(property_object_md_schema.column_names), (
+            f"PO column count mismatch: {len(vals)} vals for "
+            f"{len(property_object_md_schema.column_names)} columns"
+        )
         return vals
 
-    def load_data_in_batches(
-        self,
-        configs,
-        dataset_id=None,
-        prop_map=None,
-    ):
+    def load_data_in_batches(self, configs, dataset_id=None, prop_map=None):
         """Load data to PostgreSQL in batches."""
-
         co_po_rows = self.gather_co_po_in_batches(configs, dataset_id, prop_map)
         co_sql = self.get_co_sql()
         po_sql = self.get_po_sql()
@@ -263,15 +237,10 @@ class DataManager:
             unit="batch",
         ):
             co_rows, po_rows = list(zip(*co_po_batch))
-
             if len(co_rows) == 0:
                 continue
-            # TODO: Need to modify dataset.to_row_dict to properly aggregate values and get data to get two copies
-            # TODO: Ensure all columns are present here
-            # TODO: get column names from query and ensure len matches values
-            # columns = list(zip(*self.get_table_schema("property_objects")))[0]
-            co_values = map(self.co_row_to_values, co_rows)
-            po_values = map(self.po_row_to_values, po_rows)
+            co_values = list(map(self.co_row_to_values, co_rows))
+            po_values = list(map(self.po_row_to_values, po_rows))
             with psycopg.connect(
                 dbname=self.dbname,
                 user=self.user,
@@ -304,7 +273,6 @@ class DataManager:
     def create_ds_table(self):
         self.create_table(dataset_schema)
 
-    # currently cf-kit table with some properties removed
     def create_po_table(self):
         self.create_table(property_object_md_schema)
 
@@ -315,11 +283,10 @@ class DataManager:
         self.create_table(property_definition_schema)
 
     def insert_property_definition(self, property_dict):
-        # TODO: try except that property_dict must be jsonable
         json_pd = json.dumps(property_dict)
         last_modified = get_last_modified()
         md5_hash = hashlib.md5(json_pd.encode()).hexdigest()
-        sql = """
+        insert_sql = """
             INSERT INTO property_definitions (hash, last_modified, definition)
             VALUES (%s, %s, %s)
             ON CONFLICT (hash)
@@ -333,8 +300,7 @@ class DataManager:
             password=self.password,
         ) as conn:
             with conn.cursor() as curs:
-                curs.execute(sql, (md5_hash, last_modified, json_pd))
-        # TODO: insert columns into po table
+                curs.execute(insert_sql, (md5_hash, last_modified, json_pd))
         for key, v in property_dict.items():
             if key in [
                 "property-id",
@@ -343,36 +309,28 @@ class DataManager:
                 "property-description",
             ]:
                 continue
+            column_name = property_dict["property-name"].replace(
+                "-", "_"
+            ) + f"_{key}".replace("-", "_")
+            if v["type"] == "float":
+                data_type = "DOUBLE PRECISION"
+            elif v["type"] == "int":
+                data_type = "INT"
+            elif v["type"] == "bool":
+                data_type = "BOOL"
             else:
-                column_name = property_dict["property-name"].replace(
-                    "-", "_"
-                ) + f"_{key}".replace("-", "_")
-                if v["type"] == "float":
-                    data_type = "DOUBLE PRECISION"
-                elif v["type"] == "int":
-                    data_type = "INT"
-                elif v["type"] == "bool":
-                    data_type = "BOOL"
-                else:
-                    data_type = "VARCHAR (10000)"
-                for i in range(len(v["extent"])):
-                    data_type += "[]"
+                data_type = "VARCHAR (10000)"
+            for _ in range(len(v["extent"])):
+                data_type += "[]"
             try:
                 self.insert_new_column("property_objects", column_name, data_type)
-
             except Exception as e:
-                print(f"An error occurred: {e}")
+                logging.warning("Could not add column %s: %s", column_name, e)
 
     def get_property_definitions(self):
-        sql = """
-             SELECT definition
-             FROM property_definitions;
-        """
-        defs = self.general_query(sql)
-        dict_defs = []
-        for d in defs:
-            dict_defs.append(json.loads(d["definition"]))
-        return dict_defs
+        query = "SELECT definition FROM property_definitions;"
+        defs = self.general_query(query) or []
+        return [json.loads(d["definition"]) for d in defs]
 
     def insert_data_and_create_dataset(
         self,
@@ -388,11 +346,8 @@ class DataManager:
         doi: str = None,
         labels: list[str] = None,
         data_license: str = "CC-BY-4.0",
-        config_table=None,
-        prop_object_table=None,
         prop_map=None,
     ):
-
         if dataset_id is None:
             dataset_id = generate_ds_id()
 
@@ -403,13 +358,11 @@ class DataManager:
             elif isinstance(c, AtomicConfiguration):
                 converted_configs.append(c)
             else:
-                raise Exception(
-                    "Configs must be an instance of either ase.Atoms or AtomicConfiguration"  # noqa E501
+                raise TypeError(
+                    "Configs must be an instance of either ase.Atoms or AtomicConfiguration"
                 )
 
-        self.load_data_in_batches(
-            converted_configs, dataset_id, config_table, prop_object_table, prop_map
-        )
+        self.load_data_in_batches(converted_configs, dataset_id, prop_map)
         self.create_dataset(
             name,
             dataset_id,
@@ -426,8 +379,6 @@ class DataManager:
         return dataset_id
 
     def get_table_schema(self, table_name):
-
-        # Query to get the table schema
         query = """
         SELECT
             column_name,
@@ -447,8 +398,23 @@ class DataManager:
         ) as conn:
             with conn.cursor() as curs:
                 curs.execute(query, (table_name,))
-                schema = curs.fetchall()
-                return schema
+                return curs.fetchall()
+
+    def _insert_dataset_row(self, row: dict):
+        """Insert a dataset row; skip silently on hash conflict."""
+        columns = dataset_schema.column_names
+        query = sql.SQL(
+            "INSERT INTO {} ({}) VALUES ({}) ON CONFLICT (hash) DO NOTHING"
+        ).format(
+            sql.Identifier(dataset_schema.name),
+            sql.SQL(",").join(map(sql.Identifier, columns)),
+            sql.SQL(",").join([sql.Placeholder()] * len(columns)),
+        )
+        vals = [row.get(c) for c in columns]
+        assert len(vals) == len(columns), (
+            f"Dataset column count mismatch: {len(vals)} vals for {len(columns)} columns"
+        )
+        self.execute_sql(query, vals)
 
     def create_dataset(
         self,
@@ -464,9 +430,8 @@ class DataManager:
         labels: list[str] = None,
         data_license: str = "CC-BY-4.0",
     ):
-        # find cs_ids, co_ids, and pi_ids
-        config_df = self.dataset_query(dataset_id, "configurations")
-        prop_df = self.dataset_query(dataset_id, "property_objects")
+        config_df = self.dataset_query(dataset_id, "configurations") or []
+        prop_df = self.dataset_query(dataset_id, "property_objects") or []
 
         if isinstance(authors, str):
             authors = [authors]
@@ -486,45 +451,30 @@ class DataManager:
             configuration_set_ids=None,
             publication_year=publication_year,
         )
-        row = ds.row_dict
+        self._insert_dataset_row(ds.row_dict)
 
-        sql = """
-            INSERT INTO datasets (last_modified, nconfigurations, nproperty_objects, nsites, nelements, elements, total_elements_ratio, nperiodic_dimensions, dimension_types, energy_mean, energy_variance, atomic_forces_count, cauchy_stress_count, energy_count, authors, description, license, links, name, publication_year, doi, id, extended_id, hash, labels)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,%s, %s)
-            ON CONFLICT (hash)
-            DO NOTHING
-        """
-
-        column_headers = tuple(row.keys())
-        values = []
-        t = []
-        for column in column_headers:
-            if column in ["nconfiguration_sets"]:
-                pass
-            else:
-                val = row[column]
-                t.append(val)
-            values.append(t)
-
-        with psycopg.connect(
-            dbname=self.dbname,
-            user=self.user,
-            port=self.port,
-            host=self.host,
-            password=self.password,
-        ) as conn:
-            with conn.cursor() as curs:
-                curs.executemany(sql, values)
-
-    def insert_new_column(self, table, column_name, data_type):
-        sql = f"""
-            ALTER TABLE {table}
-            ADD COLUMN {column_name} {data_type};
-        """
-        self.execute_sql(sql)
+    def insert_new_column(self, table: str, column_name: str, data_type: str):
+        ALLOWED_TYPES = {
+            "DOUBLE PRECISION",
+            "INT",
+            "BOOL",
+            "VARCHAR (10000)",
+            "DOUBLE PRECISION[]",
+            "INT[]",
+            "BOOL[]",
+            "VARCHAR (10000)[]",
+        }
+        norm_type = data_type.replace(" ", "").upper()
+        if not any(norm_type.startswith(t.replace(" ", "").upper()) for t in ALLOWED_TYPES):
+            raise ValueError(f"Disallowed column type: {data_type!r}")
+        query = sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS {} {}").format(
+            sql.Identifier(table),
+            sql.Identifier(column_name),
+            sql.SQL(data_type),
+        )
+        self.execute_sql(query)
 
     def update_dataset(self, configs, dataset_id, prop_map):
-        # convert to CF AtomicConfiguration if not already
         converted_configs = []
         for c in configs:
             if isinstance(c, Atoms):
@@ -532,11 +482,9 @@ class DataManager:
             elif isinstance(c, AtomicConfiguration):
                 converted_configs.append(c)
             else:
-                raise Exception(
-                    "Configs must be an instance of either ase.Atoms or AtomicConfiguration"  # noqa E501
+                raise TypeError(
+                    "Configs must be an instance of either ase.Atoms or AtomicConfiguration"
                 )
-        # update dataset_id
-        # TODO: Change so it iterates from largest version
         v_no = dataset_id.split("_")[-1]
         new_v_no = int(v_no) + 1
         new_dataset_id = (
@@ -549,18 +497,11 @@ class DataManager:
 
         self.load_data_in_batches(converted_configs, new_dataset_id, prop_map=prop_map)
 
-        # config_df_1 = self.dataset_query(dataset_id, 'configurations')
-        # prop_df_1 = self.dataset_query(dataset_id, 'property_objects')
-
-        config_df_2 = self.dataset_query(new_dataset_id, "configurations")
-        prop_df_2 = self.dataset_query(new_dataset_id, "property_objects")
-
-        # config_df_1.extend(config_df_2)
-        # prop_df_1.extend(prop_df_2)
+        config_df_2 = self.dataset_query(new_dataset_id, "configurations") or []
+        prop_df_2 = self.dataset_query(new_dataset_id, "property_objects") or []
 
         old_ds = self.get_dataset(dataset_id)[0]
 
-        # format links
         s = old_ds["links"][0].split(" ")[-1].replace("'", "")
         d = old_ds["links"][1].split(" ")[-1].replace("'", "")
         o = old_ds["links"][2].split(" ")[-1].replace("'", "")
@@ -575,75 +516,42 @@ class DataManager:
             description=old_ds["description"],
             other_links=o,
             dataset_id=new_dataset_id,
-            labels=old_ds["labels"],
+            labels=old_ds.get("labels"),
             doi=old_ds["doi"],
             data_license=old_ds["license"],
-            # TODO handle cs later
             configuration_set_ids=None,
             publication_year=old_ds["publication_year"],
         )
-        row = ds.row_dict
+        self._insert_dataset_row(ds.row_dict)
+        return new_dataset_id
 
-        sql = """
-            INSERT INTO datasets (last_modified, nconfigurations, nproperty_objects, nsites, nelements, elements, total_elements_ratio, nperiodic_dimensions, dimension_types, energy_mean, energy_variance, atomic_forces_count, cauchy_stress_count, energy_count, authors, description, license, links, name, publication_year, doi, id, extended_id, hash, labels)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,%s, %s)
-            ON CONFLICT (hash)
-            DO NOTHING
-        """
+    def get_dataset_data(self, dataset_id: str):
+        query = (
+            "SELECT c.*, po.* "
+            "FROM (SELECT * FROM configurations WHERE %s = ANY(dataset_ids)) c "
+            "INNER JOIN (SELECT * FROM property_objects WHERE dataset_id = %s) po "
+            "ON c.id = po.configuration_id"
+        )
+        return self.general_query(query, (dataset_id, dataset_id))
 
-        column_headers = tuple(row.keys())
-        values = []
-        t = []
-        for column in column_headers:
-            if column in ["nconfiguration_sets"]:
-                pass
-            else:
-                val = row[column]
-                t.append(val)
-            values.append(t)
-
-        with psycopg.connect(
-            dbname=self.dbname,
-            user=self.user,
-            port=self.port,
-            host=self.host,
-            password=self.password,
-        ) as conn:
-            with conn.cursor() as curs:
-                curs.executemany(sql, values)
-                return new_dataset_id
-
-    def get_dataset_data(self, dataset_id):
-        sql = f"""
-        SELECT
-            c.*,
-            po.*
-        FROM
-            (SELECT * FROM configurations WHERE '{dataset_id}' = ANY(dataset_ids)) c
-        INNER JOIN
-            (SELECT * FROM property_objects WHERE dataset_id = '{dataset_id}') po
-        ON
-            c.id = po.configuration_id;
-        """
-        return self.general_query(sql)
-
-    def general_query(self, sql):
-        with psycopg.connect(
-            dbname=self.dbname,
-            user=self.user,
-            port=self.port,
-            host=self.host,
-            password=self.password,
-            row_factory=dict_row,
-        ) as conn:
-            with conn.cursor() as curs:
-                curs.execute(sql)
-                try:
+    def general_query(self, query, params=None):
+        try:
+            with psycopg.connect(
+                dbname=self.dbname,
+                user=self.user,
+                port=self.port,
+                host=self.host,
+                password=self.password,
+                row_factory=dict_row,
+            ) as conn:
+                with conn.cursor() as curs:
+                    curs.execute(query, params)
                     return curs.fetchall()
-                except:
-                    return
+        except Exception:
+            logging.exception("Query failed: %s", query)
+            return None
 
-    def execute_sql(self, sql):
+    def execute_sql(self, query, params=None):
         with psycopg.connect(
             dbname=self.dbname,
             user=self.user,
@@ -652,129 +560,92 @@ class DataManager:
             password=self.password,
         ) as conn:
             with conn.cursor() as curs:
-                curs.execute(sql)
+                curs.execute(query, params)
 
-    def dataset_query(
-        self,
-        dataset_id=None,
-        table_name=None,
-    ):
+    def dataset_query(self, dataset_id: str, table_name: str):
+        allowed_tables = {"configurations", "property_objects"}
+        if table_name not in allowed_tables:
+            raise ValueError(f"table_name must be one of {allowed_tables}")
         if table_name == "configurations":
-            sql = f"""
-                SELECT *
-                FROM {table_name}
-                WHERE '{dataset_id}' = ANY(dataset_ids);
-            """
-        elif table_name == "property_objects":
-            sql = f"""
-                SELECT *
-                FROM {table_name}
-                WHERE dataset_id = '{dataset_id}';
-            """
-        else:
-            raise Exception(
-                "Only configurations and property_objects tables are supported"
+            query = sql.SQL("SELECT * FROM {} WHERE {} = ANY({})").format(
+                sql.Identifier(table_name),
+                sql.Placeholder(),
+                sql.Identifier("dataset_ids"),
             )
+        else:
+            query = sql.SQL("SELECT * FROM {} WHERE {} = {}").format(
+                sql.Identifier(table_name),
+                sql.Identifier("dataset_id"),
+                sql.Placeholder(),
+            )
+        return self.general_query(query, (dataset_id,))
 
-        return self.general_query(sql)
-
-    def get_dataset(self, dataset_id):
-        sql = f"""
-                SELECT *
-                FROM datasets
-                WHERE id = '{dataset_id}';
-            """
-        print(dataset_id)
-        return self.general_query(sql)
+    def get_dataset(self, dataset_id: str):
+        query = sql.SQL("SELECT * FROM {} WHERE {} = {}").format(
+            sql.Identifier("datasets"),
+            sql.Identifier("id"),
+            sql.Placeholder(),
+        )
+        return self.general_query(query, (dataset_id,))
 
     def create_configuration_sets(
         self,
-        loader,
+        dataset_id: str,
         name_label_match: list[tuple],
     ):
+        """Create configuration sets for a dataset by matching configuration names/labels.
+
+        Args:
+            dataset_id: Dataset ID to create configuration sets for.
+            name_label_match: List of tuples, each containing:
+                1. String pattern for matching configuration names (None = match all)
+                2. String pattern for matching configuration labels (None = match all)
+                3. Name for the configuration set
+                4. Description for the configuration set
         """
-        Args for name_label_match in order:
-        1. String pattern for matching CONFIGURATION NAMES
-        2. String pattern for matching CONFIGURATION LABELS
-        3. Name for configuration set
-        4. Description for configuration set
-        """
-        dataset_id = self.dataset_id
+        config_rows = self.dataset_query(dataset_id, "configurations") or []
         config_set_rows = []
-        for i, (names_match, label_match, cs_name, cs_desc) in tqdm(
-            enumerate(name_label_match), desc="Creating Configuration Sets"
+        for names_match, label_match, cs_name, cs_desc in tqdm(
+            name_label_match, desc="Creating Configuration Sets"
         ):
-            print(
-                f"names match: {names_match}, label: {label_match}, "
-                f"cs_name: {cs_name}, cs_desc: {cs_desc}"
-            )
-            config_set_query_df = loader.config_set_query(
-                query_table=loader.config_table,
-                dataset_id=dataset_id,
-                name_match=names_match,
-                label_match=label_match,
-            )
-            co_id_df = (
-                config_set_query_df.select("id")
-                .distinct()
-                .withColumnRenamed("id", "configuration_id")
-            )
-            string_cols = [
-                "elements",
-            ]
-            unstring_col_udf = sf.udf(unstring_df_val, ArrayType(StringType()))
-            for col in string_cols:
-                config_set_query_df = config_set_query_df.withColumn(
-                    col, unstring_col_udf(sf.col(col))
+            matched = []
+            for c in config_rows:
+                co_names = c.get("names") or []
+                co_labels = c.get("labels") or []
+                name_ok = names_match is None or any(
+                    names_match in n for n in co_names
                 )
-            unstring_col_udf = sf.udf(unstring_df_val, ArrayType(IntegerType()))
-            int_cols = [
-                "atomic_numbers",
-                "dimension_types",
-            ]
-            for col in int_cols:
-                config_set_query_df = config_set_query_df.withColumn(
-                    col, unstring_col_udf(sf.col(col))
+                label_ok = label_match is None or any(
+                    label_match in lb for lb in co_labels
                 )
-            t = time()
-            prelim_cs_id = f"CS_{cs_name}_{self.dataset_id}"
-            co_cs_df = loader.get_co_cs_mapping(prelim_cs_id)
-            if co_cs_df is not None:
-                print(
-                    f"Configuration Set {cs_name} already exists.\nRemove rows matching "  # noqa E501
-                    f"'configuration_set_id == {prelim_cs_id} from table {loader.co_cs_map_table} to recreate.\n"  # noqa E501
-                )
+                if name_ok and label_ok:
+                    matched.append(c)
+            if not matched:
                 continue
             config_set = ConfigurationSet(
                 name=cs_name,
                 description=cs_desc,
-                config_df=config_set_query_df,
-                dataset_id=self.dataset_id,
+                config_df=matched,
+                dataset_id=dataset_id,
             )
-            co_cs_df = co_id_df.withColumn("configuration_set_id", sf.lit(config_set.id))
-            loader.write_table(co_cs_df, loader.co_cs_map_table, check_unique=False)
-            loader.update_existing_co_rows(
-                co_df=config_set_query_df,
-                cols=["configuration_set_ids"],
-                elems=config_set.id,
-            )
-            t_end = time() - t
-            print(f"Time to create CS and update COs with CS-ID: {t_end}")
-
+            co_ids = [c["id"] for c in matched]
+            self._append_cs_id_to_configs(co_ids, config_set.id)
+            self._insert_configuration_set(config_set.row_dict)
             config_set_rows.append(config_set.row_dict)
-        config_set_df = loader.spark.createDataFrame(
-            config_set_rows, schema=configuration_set_schema
-        )
-        loader.write_table(config_set_df, loader.config_set_table)
         return config_set_rows
 
-    def delete_dataset(self, dataset_id):
-        sql = """
-            DELETE
-            FROM datasets
-            WHERE id = %s;
-        """
-        # TODO: delete children as well
+    def _append_cs_id_to_configs(self, co_ids: list, cs_id: str):
+        """Append a configuration set ID to configuration_set_ids for each CO."""
+        query = sql.SQL(
+            "UPDATE {table} SET {col} = array_append({col}, {val}) "
+            "WHERE {id_col} = ANY({ids})"
+        ).format(
+            table=sql.Identifier("configurations"),
+            col=sql.Identifier("configuration_set_ids"),
+            val=sql.Placeholder(),
+            id_col=sql.Identifier("id"),
+            ids=sql.Placeholder(),
+        )
         with psycopg.connect(
             dbname=self.dbname,
             user=self.user,
@@ -783,192 +654,29 @@ class DataManager:
             password=self.password,
         ) as conn:
             with conn.cursor() as curs:
-                curs.execute(sql, (dataset_id,))
+                curs.execute(query, (cs_id, co_ids))
 
-
-class S3BatchManager:
-    def __init__(self, bucket_name, access_id, secret_key, endpoint_url=None):
-        self.bucket_name = bucket_name
-        self.access_id = access_id
-        self.secret_key = secret_key
-        self.endpoint_url = endpoint_url
-        self.client = self.get_client()
-        self.MAX_BATCH_SIZE = 100
-
-    def get_client(self):
-        return boto3.client(
-            "s3",
-            use_ssl=False,
-            endpoint_url=self.endpoint_url,
-            aws_access_key_id=self.access_id,
-            aws_secret_access_key=self.secret_key,
-            region_name="fake-region",
-            config=boto3.session.Config(
-                signature_version="s3v4", s3={"addressing_style": "path"}
-            ),
+    def _insert_configuration_set(self, cs_row: dict):
+        """Insert a configuration set row; skip on hash conflict."""
+        columns = configuration_set_schema.column_names
+        query = sql.SQL(
+            "INSERT INTO {} ({}) VALUES ({}) ON CONFLICT (hash) DO NOTHING"
+        ).format(
+            sql.Identifier(configuration_set_schema.name),
+            sql.SQL(",").join(map(sql.Identifier, columns)),
+            sql.SQL(",").join([sql.Placeholder()] * len(columns)),
         )
+        vals = [cs_row.get(c) for c in columns]
+        self.execute_sql(query, vals)
 
-    def batch_write(self, file_batch):
-        results = []
-        for key, content in file_batch:
-            try:
-                self.client.put_object(Bucket=self.bucket_name, Key=key, Body=content)
-                results.append((key, None))
-            except Exception as e:
-                results.append((key, str(e)))
-        return results
-
-
-def write_md_partition(partition, config):
-    s3_mgr = S3BatchManager(
-        bucket_name=config["bucket_dir"],
-        access_id=config["access_key"],
-        secret_key=config["access_secret"],
-        endpoint_url=config["endpoint"],
-    )
-    file_batch = []
-    for row in partition:
-        md_path = Path(config["metadata_dir"]) / row["metadata_path"]
-        file_batch.append((str(md_path), row["metadata"]))
-
-        if len(file_batch) >= s3_mgr.MAX_BATCH_SIZE:
-            _ = s3_mgr.batch_write(file_batch)
-            file_batch = []
-    if file_batch:
-        _ = s3_mgr.batch_write(file_batch)
-    return iter([])
-
-
-class S3FileManager:
-    def __init__(self, bucket_name, access_id, secret_key, endpoint_url=None):
-        self.bucket_name = bucket_name
-        self.access_id = access_id
-        self.secret_key = secret_key
-        self.endpoint_url = endpoint_url
-
-    def get_client(self):
-        return boto3.client(
-            "s3",
-            use_ssl=False,
-            endpoint_url=self.endpoint_url,
-            aws_access_key_id=self.access_id,
-            aws_secret_access_key=self.secret_key,
-            region_name="fake-region",
-            config=boto3.session.Config(
-                signature_version="s3v4", s3={"addressing_style": "path"}
-            ),
-        )
-
-    def write_file(self, content, file_key):
-        try:
-            client = self.get_client()
-            client.put_object(Bucket=self.bucket_name, Key=file_key, Body=content)
-            # return (f"/vdev/{self.bucket_name}/{file_key}", sys.getsizeof(content))
-        except Exception as e:
-            return f"Error: {str(e)}"
-
-    def read_file(self, file_key):
-        try:
-            client = self.get_client()
-            # key = file_key.replace(str(Path("/vdev/colabfit-data")) + "/", "")
-            response = client.get_object(Bucket=self.bucket_name, Key=file_key)
-            return response["Body"].read().decode("utf-8")
-        except Exception as e:
-            return f"Error: {str(e)}"
-
-
-def generate_ds_id():
-    # Maybe check to see whether the DS ID already exists?
-    ds_id = ID_FORMAT_STRING.format("DS", generate_string(), 0)
-    # print("Generated new DS ID:", ds_id)
-    return ds_id
-
-
-"""
-@sf.udf(returnType=StringType())
-def prepend_path_udf(prefix, md_path):
-    try:
-        full_path = Path(prefix) / Path(md_path).relative_to("/")
-        return str(full_path)
-    except ValueError:
-        full_path = Path(prefix) / md_path
-        return str(full_path)
-"""
-
-# def write_md_partition(partition, config):
-#     s3_mgr = S3FileManager(
-#         bucket_name=config["bucket_dir"],
-#         access_id=config["access_key"],
-#         secret_key=config["access_secret"],
-#         endpoint_url=config["endpoint"],
-#     )
-#     for row in partition:
-#         md_path = Path(config["metadata_dir"]) / row["metadata_path"]
-#         if not md_path.exists():
-#             s3_mgr.write_file(
-#                 row["metadata"],
-#                 str(md_path),
-#             )
-#     return iter([])
-
-
-def read_md_partition(partition, config):
-    s3_mgr = S3FileManager(
-        bucket_name=config["bucket_dir"],
-        access_id=config["access_key"],
-        secret_key=config["access_secret"],
-        endpoint_url=config["endpoint"],
-    )
-
-    def process_row(row):
-        rowdict = row.asDict()
-        try:
-            rowdict["metadata"] = s3_mgr.read_file(row["metadata_path"])
-        except ClientError as e:
-            if e.response["Error"]["Code"] == "404":
-                rowdict["metadata"] = None
-            else:
-                print(f"Error reading {row['metadata_path']}: {str(e)}")
-                rowdict["metadata"] = None
-        return Row(**rowdict)
-
-    return map(process_row, partition)
-
-
-'''
-def dataset_query(
-    dataset_id=None,
-    table_name=None,
-):
-    if table_name == 'configurations':
-        sql = f"""
-            SELECT *
-            FROM {table_name}
-            WHERE '{dataset_id}' = ANY(dataset_ids);
-        """
-    elif table_name == 'property_objects':
-        sql = f"""
-            SELECT *
-            FROM {table_name}
-            WHERE dataset_id = '{dataset_id}';
-        """
-    else:
-        raise Exception('Only configurations and property_objects tables are supported')
-
-    with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password,row_factory=dict_row) as conn:
-        with conn.cursor() as curs:
-            r = curs.execute(sql)
-            return curs.fetchall()
-
-def get_dataset(dataset_id):
-    sql = f"""
-            SELECT *
-            FROM datasets
-            WHERE id = '{dataset_id}';
-        """
-
-    with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password,row_factory=dict_row) as conn:
-        with conn.cursor() as curs:
-            r = curs.execute(sql)
-            return curs.fetchall()
-'''
+    def delete_dataset(self, dataset_id: str):
+        delete_sql = "DELETE FROM datasets WHERE id = %s;"
+        with psycopg.connect(
+            dbname=self.dbname,
+            user=self.user,
+            port=self.port,
+            host=self.host,
+            password=self.password,
+        ) as conn:
+            with conn.cursor() as curs:
+                curs.execute(delete_sql, (dataset_id,))

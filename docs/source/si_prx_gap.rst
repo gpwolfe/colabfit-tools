@@ -2,6 +2,13 @@
 Si PRX GAP example
 ==================
 
+.. note::
+
+   This example was written for the MongoDB implementation and references
+   ``PropertySettings``, which is not part of the PostgreSQL implementation.
+   It is retained for historical reference only.
+   See :class:`colabfit.tools.pg.database.DataManager` for the current API.
+
 This example will be used to highlight some of the more advanced features of the
 Dataset class using the popular `Si GAP dataset <https://www.repository.cam.ac.uk/handle/1810/317974>`_.
 It is suggested that you go through the :ref:`basic example <Basic example>` first. The complete

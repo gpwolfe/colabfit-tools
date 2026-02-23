@@ -10,7 +10,7 @@ needs, but if no suitable definition already exists in the Database you can add
 your own custom definition.
 
 Custom properties can be defined using
-:meth:`~colabfit.tools.database.MongoDatabase.insert_property_definition` and
+:meth:`~colabfit.tools.pg.database.DataManager.insert_property_definition` and
 supplying a dictionary that has been formatted according to the
 `KIM Properties Framework <https://openkim.org/doc/schema/properties-framework/>`_.
 

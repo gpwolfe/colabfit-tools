@@ -2,10 +2,7 @@
 Database
 ========
 
-.. autoclass:: colabfit.tools.database.MongoDatabase
+.. autoclass:: colabfit.tools.pg.database.DataManager
     :members:
     :special-members: __hash__
     :undoc-members:
-
-.. automodule:: colabfit.tools.database
-    :members: load_data

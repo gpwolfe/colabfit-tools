@@ -11,7 +11,7 @@ Classes
     configuration
     property
     property_settings
-    
+
 .. toctree::
     :maxdepth: 2
     :caption: High-level classes

@@ -49,72 +49,63 @@ class ConfigurationSet:
         self.name = name
         self.description = description
         self.dataset_id = dataset_id
-        # self.ordered = ordered
         self.row_dict = self.to_row_dict(config_df)
         self.id = f"CS_{self.name}_{self.dataset_id}"
-        self._hash = hash(self)
+        cs_hash = sha512()
+        cs_hash.update(self.id.encode("utf-8"))
+        self._hash = cs_hash.hexdigest()
         self.row_dict["id"] = self.id
         self.row_dict["extended_id"] = f"{self.name}__{self.id}"
-        self.row_dict["hash"] = str(self._hash)
+        self.row_dict["hash"] = self._hash
 
-    def to_row_dict(self, config_df):
+    def to_row_dict(self, config_df: list) -> dict:
+        """Build configuration set row dict from a list of configuration row dicts.
+
+        Args:
+            config_df: List of row dicts as returned by dataset_query('configurations').
+        """
         row_dict = _empty_dict_from_schema(configuration_set_schema)
         row_dict["name"] = self.name
         row_dict["description"] = self.description
-        row_dict["nconfigurations"] = config_df.select("id").distinct().count()
         row_dict["last_modified"] = get_last_modified()
-        # config_df = config_df.withColumn(
-        #     "nsites_multiple", sf.col("nsites") * sf.col("multiplicity")
-        # )
-        row_dict["nsites"] = config_df.agg({"nsites": "sum"}).first()[0]
-        row_dict["elements"] = sorted(
-            config_df.withColumn("exploded_elements", sf.explode("elements"))
-            .agg(sf.collect_set("exploded_elements").alias("exploded_elements"))
-            .select("exploded_elements")
-            .take(1)[0][0]
-        )
-        row_dict["nperiodic_dimensions"] = config_df.agg(
-            sf.collect_set("nperiodic_dimensions")
-        ).collect()[0][0]
-        row_dict["dimension_types"] = config_df.agg(
-            sf.collect_set("dimension_types")
-        ).collect()[0][0]
-        atomic_ratios_df = (
-            config_df.select("atomic_numbers")
-            #     config_df.select("atomic_numbers", "multiplicity")
-            #     .withColumn(
-            #         "repeated_numbers",
-            #         sf.expr(
-            #            "transform(atomic_numbers, x -> array_repeat(x, multiplicity))"
-            #         ),
-            #     )
-            # .withColumn("single_element", sf.explode(sf.flatten("repeated_numbers")))
-            .withColumn("single_element", sf.explode("atomic_numbers"))
-        )
-        total_elements = atomic_ratios_df.count()
-        print(total_elements, row_dict["nsites"])
-        assert total_elements == row_dict["nsites"]
-        atomic_ratios_df = atomic_ratios_df.groupBy("single_element").count()
-        atomic_ratios_df = atomic_ratios_df.withColumn(
-            "ratio", sf.col("count") / total_elements
-        )
-        atomic_ratios_coll = (
-            atomic_ratios_df.withColumn(
-                "element",
-                sf.udf(lambda x: ELEMENT_MAP[int(x)], StringType())(
-                    sf.col("single_element")
-                ),
-            )
-            .select("element", "ratio")
-            .collect()
-        )
-        row_dict["total_elements_ratios"] = [
-            x[1] for x in sorted(atomic_ratios_coll, key=lambda x: x["element"])
-        ]
-        row_dict["nelements"] = len(row_dict["elements"])
-        row_dict["nsites"] = config_df.agg({"nsites": "sum"}).first()[0]
-        row_dict["dataset_id"] = self.dataset_id
+        row_dict["nconfigurations"] = len({c["id"] for c in config_df})
+        row_dict["nsites"] = sum(c["nsites"] for c in config_df)
 
+        elements_set = set()
+        for c in config_df:
+            elements_set.update(c["elements"] or [])
+        row_dict["elements"] = sorted(elements_set)
+        row_dict["nelements"] = len(row_dict["elements"])
+
+        periodic_dims = set(
+            c["nperiodic_dimensions"]
+            for c in config_df
+            if c["nperiodic_dimensions"] is not None
+        )
+        dim_types = set(
+            tuple(c["dimension_types"])
+            for c in config_df
+            if c["dimension_types"]
+        )
+        row_dict["nperiodic_dimensions"] = sorted(periodic_dims)
+        row_dict["dimension_types"] = [list(d) for d in sorted(dim_types)]
+
+        total_atoms = row_dict["nsites"]
+        element_counts: dict = {}
+        for c in config_df:
+            for atomic_num in (c["atomic_numbers"] or []):
+                sym = ELEMENT_MAP[atomic_num]
+                element_counts[sym] = element_counts.get(sym, 0) + 1
+        row_dict["total_elements_ratios"] = (
+            [
+                element_counts.get(e, 0) / total_atoms
+                for e in row_dict["elements"]
+            ]
+            if total_atoms > 0
+            else []
+        )
+
+        row_dict["dataset_id"] = self.dataset_id
         return row_dict
 
     def __hash__(self):

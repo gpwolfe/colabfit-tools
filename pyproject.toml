@@ -24,12 +24,8 @@ dependencies = [
     "kim_property",
     "numpy",
     "tqdm",
-    "markdown",
-    "plotly",
-    "django",
     "periodictable",
     "unidecode",
-    "notebook",
     "python-dotenv",
 ]
 
@@ -38,13 +34,24 @@ Homepage = "https://github.com/colabfit/colabfit-tools"
 Repository = "https://github.com/colabfit/colabfit-tools"
 
 [project.optional-dependencies]
-dev = [
-    "black",
-    "flake8",
+pg = [
+    "psycopg[binary]",
 ]
 vast = [
     "vastdb",
     "pyspark",
     "pyarrow",
     "ibis-framework",
+    "boto3",
+]
+dev = [
+    "black",
+    "flake8",
+    "ruff",
+    "pytest",
+]
+notebooks = [
+    "markdown",
+    "plotly",
+    "notebook",
 ]

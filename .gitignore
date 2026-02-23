@@ -70,6 +70,8 @@ instance/
 
 # Sphinx documentation
 docs/_build/
+docs/doctrees/
+docs/html/
 
 # PyBuilder
 target/
@@ -144,3 +146,6 @@ colabfit/api/data/uploads
 #pycharm
 .idea/
 .iml
+
+# local docs preview notes
+docs/PREVIEW.md
