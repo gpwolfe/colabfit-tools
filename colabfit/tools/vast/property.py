@@ -454,6 +454,7 @@ class Property(DataObject, dict):
         configuration,
         property_map,
         standardize_energy=True,
+        suppress_warnings: set = None,
     ):
         """
         A function for constructing a Property given a property setting hash, a property
@@ -470,7 +471,13 @@ class Property(DataObject, dict):
             property_map (dict):
                 A property map as described in the Property attributes section.
 
+            suppress_warnings (set, optional):
+                Set of property names (e.g. ``{"band-gap"}``) for which missing-value
+                warnings are downgraded to DEBUG. Warnings for all other properties are
+                still emitted at WARNING level.
+
         """
+        suppress_warnings = suppress_warnings or set()
         props_dict = {}
         metadata = property_map.get("_metadata")
         pi_md, method, software = md_from_map(metadata, configuration)
@@ -495,8 +502,11 @@ class Property(DataObject, dict):
                     if p_info is None:
                         logger.warning(f"property {pname} not found in MAIN_KEY_MAP")
                         continue
+                    _log = (
+                        logger.debug if pname in suppress_warnings else logger.warning
+                    )
                     if p_info.key not in pmap:
-                        logger.warning(
+                        _log(
                             f"Property {p_info.key} not found in pmap for {pname}: {pmap}"  # noqa E501
                         )
                         pdef_dict.pop(pname)
@@ -504,7 +514,7 @@ class Property(DataObject, dict):
                     instance = instance.copy()
                     pval = cls.get_property_value(pmap, configuration)
                     if pval is False:
-                        logger.warning(
+                        _log(
                             f"Property {p_info.key} not found in arrays or info for {pname}: {pmap}"  # noqa E501
                         )
                         pdef_dict.pop(pname)
@@ -602,7 +612,9 @@ class Property(DataObject, dict):
             if "per-atom" in prop_dict:
                 if prop_dict["per-atom"]["source-value"] is True:
                     if self.nsites is None:
-                        raise RuntimeError("nsites must be provided to convert per-atom")
+                        raise RuntimeError(
+                            "nsites must be provided to convert per-atom"
+                        )
                     prop_val *= self.nsites
 
             if units != p_info.unit:
@@ -947,7 +959,9 @@ class PropertyMap:
                 units = prop["units"]
                 original_file_key = prop["original_file_key"]
                 additional = prop.get("additional", [])
-                self.set_property(prop_name, field, units, original_file_key, additional)
+                self.set_property(
+                    prop_name, field, units, original_file_key, additional
+                )
             elif isinstance(prop, PropertyInfo):
                 self.set_property(
                     prop.property_name,
@@ -1030,7 +1044,9 @@ class PropertyMap:
                     continue
                 elif val.get("has-unit") and prop_view.get("units") is None:
                     raise ValueError(f"Property '{prop_name}' must have 'units' set.")
-                elif val.get("has-unit") is False and prop_view.get("units") is not None:
+                elif (
+                    val.get("has-unit") is False and prop_view.get("units") is not None
+                ):
                     raise ValueError(
                         f"Property '{prop_name}' must have key {key}: 'units' set to None."  # noqa E501
                     )

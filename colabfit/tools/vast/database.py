@@ -122,6 +122,52 @@ class VastDataLoader:
                         return False
         return True
 
+    def find_duplicate_property_ids(self, table_name: str) -> pa.Table:
+        """
+        Scan table_name for duplicate property_id values.
+
+        Returns a pa.Table with columns [property_id, count] sorted by count
+        descending, containing only property_id values that appear more than once.
+        """
+        bucket_name, schema_name, table_n = self._get_table_split(table_name)
+        id_chunks = []
+        with self.session.transaction() as tx:
+            vdb_table = tx.bucket(bucket_name).schema(schema_name).table(table_n)
+            for batch in vdb_table.select(columns=["property_id"]):
+                id_chunks.append(batch.column("property_id"))
+
+        empty = pa.table(
+            {
+                "property_id": pa.array([], type=pa.string()),
+                "count": pa.array([], type=pa.int64()),
+            }
+        )
+        if not id_chunks:
+            logger.info(f"No rows found in {table_name}")
+            return empty
+
+        counts_struct = pc.value_counts(pa.chunked_array(id_chunks))
+        values = counts_struct.field("values")
+        counts = counts_struct.field("counts")
+
+        dup_mask = pc.greater(counts, 1)
+        result = pa.table(
+            {
+                "property_id": pc.filter(values, dup_mask),
+                "count": pc.filter(counts, dup_mask),
+            }
+        ).sort_by([("count", "descending")])
+
+        if result.num_rows == 0:
+            logger.info(f"No duplicate property_id values found in {table_name}")
+        else:
+            total_extra = pc.sum(pc.subtract(result["count"], 1)).as_py()
+            logger.warning(
+                f"Found {result.num_rows} property_id values with duplicates "
+                f"({total_extra} extra rows) in {table_name}"
+            )
+        return result
+
     def write_table_first(self, table: pa.Table, table_name: str):
         """Write new rows; return existing rows (for multiplicity update)."""
         identifier_dict = {
@@ -485,6 +531,7 @@ class DataManager:
         dataset_id: str = None,
         standardize_energy: bool = True,
         read_write_batch_size: int = 10000,
+        suppress_warnings: set = None,
     ):
         self.configs = configs
         if not prop_defs:
@@ -498,6 +545,7 @@ class DataManager:
         self.nprocs = nprocs
         self.dataset_id = dataset_id
         self.standardize_energy = standardize_energy
+        self.suppress_warnings = suppress_warnings or set()
         logger.info(f"Dataset ID: {self.dataset_id}")
 
     @staticmethod
@@ -507,6 +555,7 @@ class DataManager:
         dataset_id: str,
         configs: list[AtomicConfiguration],
         standardize_energy: bool = True,
+        suppress_warnings: set = None,
     ):
         """Convert COs and POs to row dicts."""
         co_po_rows = []
@@ -517,6 +566,7 @@ class DataManager:
                 configuration=config,
                 property_map=prop_map,
                 standardize_energy=standardize_energy,
+                suppress_warnings=suppress_warnings,
             )
             co_po_rows.append(
                 (
@@ -542,6 +592,7 @@ class DataManager:
                 self.dataset_id,
                 config,
                 standardize_energy=self.standardize_energy,
+                suppress_warnings=self.suppress_warnings,
             )[0],
         )
 
@@ -557,7 +608,8 @@ class DataManager:
             self.prop_defs,
             self.prop_map,
             self.dataset_id,
-            self.standardize_energy,
+            standardize_energy=self.standardize_energy,
+            suppress_warnings=self.suppress_warnings,
         )
         return itertools.chain.from_iterable(pool.map(part_gather, list(config_chunks)))
 
@@ -592,11 +644,12 @@ class DataManager:
                     self.dataset_id,
                     chunk,
                     standardize_energy=self.standardize_energy,
+                    suppress_warnings=self.suppress_warnings,
                 )
             )
 
     def deduplicate_co_po_rows(self, rows: list[dict]) -> list[dict]:
-        """Aggregate multiplicity for rows with duplicate property_hash values."""
+        """Aggregate multiplicity and merge names for rows with duplicate property_hash."""
         seen = {}
         for row in rows:
             h = row["property_hash"]
@@ -604,6 +657,11 @@ class DataManager:
                 seen[h] = {**row, "multiplicity": 1}
             else:
                 seen[h]["multiplicity"] += 1
+                for field in ("names", "labels"):
+                    new_vals = row.get(field) or []
+                    if new_vals:
+                        existing = seen[h].get(field) or []
+                        seen[h][field] = list(dict.fromkeys(existing + new_vals))
         return list(seen.values())
 
     def check_existing_tables(
@@ -694,13 +752,16 @@ class DataManager:
                 co_po_combined_rows, schema=config_prop_schema
             )
             del co_po_combined_rows
-            co_count_distinct = len(pc.unique(co_table["property_hash"].drop_null()))
+            co_count_distinct = len(pc.unique(co_table["property_hash"]))
             if co_count_distinct < co_count:
                 logger.info(
                     f"{co_count - co_count_distinct} duplicates found in CO-PO table"
                 )
                 dedup_rows = self.deduplicate_co_po_rows(co_table.to_pylist())
                 co_table = pa.Table.from_pylist(dedup_rows, schema=config_prop_schema)
+                co_count = co_table.num_rows
+                max_mult = pc.max(co_table["multiplicity"]).as_py()
+                logger.info(f"After dedup: {co_count} rows, max multiplicity={max_mult}")
                 del dedup_rows
             if check_existing:
                 co_existing = loader.write_table_first(co_table, loader.config_table)
