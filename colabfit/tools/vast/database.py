@@ -1,16 +1,19 @@
 import gc
 import itertools
 import logging
+import re
 from functools import partial
 from itertools import islice
 from multiprocessing import Pool
 from time import time
 from types import GeneratorType
+from typing import Callable
 
 import pyarrow as pa
 import pyarrow.compute as pc
 from ibis import _
 from tqdm import tqdm
+from vastdb.config import QueryConfig
 from vastdb.session import Session
 
 from colabfit.tools.vast.configuration import AtomicConfiguration
@@ -47,6 +50,7 @@ class VastDataLoader:
         endpoint: str = None,
         access_key: str = None,
         access_secret: str = None,
+        limit_rows_per_sub_split: int = 150_000,
     ):
         self.table_prefix = table_prefix
         if endpoint and access_key and access_secret:
@@ -63,6 +67,10 @@ class VastDataLoader:
         self.dataset_table = f"{self.table_prefix}.{_DATASETS_COLLECTION}"
         self.co_cs_map_table = f"{self.table_prefix}.{_CO_CS_MAP_COLLECTION}"
         self.bucket_dir = VAST_BUCKET_DIR
+        self.query_config = QueryConfig(
+            limit_rows_per_sub_split=limit_rows_per_sub_split,
+            use_semi_sorted_projections=False,
+        )
 
     def get_vastdb_session(self, endpoint: str, access_key: str, access_secret: str):
         return Session(endpoint=endpoint, access=access_key, secret=access_secret)
@@ -97,7 +105,9 @@ class VastDataLoader:
         with self.session.transaction() as tx:
             table = tx.bucket(bucket_name).schema(schema_name).table(table_n)
             rec_batch = table.select(
-                predicate=table["id"].isin(ids), internal_row_id=True
+                predicate=table["id"].isin(ids),
+                internal_row_id=True,
+                config=self.query_config,
             )
             for batch in rec_batch:
                 table.delete(rows=batch)
@@ -114,7 +124,9 @@ class VastDataLoader:
                 batched(ids, 10000), desc=f"Checking for duplicates in {table_name}"
             ):
                 rec_batch_reader = vdb_table.select(
-                    predicate=vdb_table["id"].isin(id_batch), columns=["id"]
+                    predicate=vdb_table["id"].isin(id_batch),
+                    columns=["id"],
+                    config=self.query_config,
                 )
                 for batch in rec_batch_reader:
                     if batch.num_rows > 0:
@@ -133,7 +145,9 @@ class VastDataLoader:
         id_chunks = []
         with self.session.transaction() as tx:
             vdb_table = tx.bucket(bucket_name).schema(schema_name).table(table_n)
-            for batch in vdb_table.select(columns=["property_id"]):
+            for batch in vdb_table.select(
+                columns=["property_id"], config=self.query_config
+            ):
                 id_chunks.append(batch.column("property_id"))
 
         empty = pa.table(
@@ -168,6 +182,156 @@ class VastDataLoader:
             )
         return result
 
+    def _build_dedup_updates(self, fetched: pa.Table) -> tuple[pa.Table, list[int]]:
+        """
+        Group fetched rows (with $row_id) by property_hash. For each group,
+        build an update for the survivor row (summed multiplicity, merged
+        names/labels) and collect indices of the extra rows to delete.
+
+        Returns (update_table, delete_indices).
+        """
+        hash_col = fetched["property_hash"].to_pylist()
+        row_id_col = fetched["$row_id"].to_pylist()
+        mult_col = fetched["multiplicity"].to_pylist()
+        names_col = fetched["names"].to_pylist()
+        labels_col = fetched["labels"].to_pylist()
+
+        rows_by_hash: dict[str, list[int]] = {}
+        for i, h in enumerate(hash_col):
+            rows_by_hash.setdefault(h, []).append(i)
+
+        update_row_ids, update_mults, update_names, update_labels = [], [], [], []
+        delete_indices: list[int] = []
+
+        for indices in rows_by_hash.values():
+            total_mult = sum(mult_col[i] or 0 for i in indices)
+            merged_names = list(
+                dict.fromkeys(n for i in indices for n in (names_col[i] or []))
+            )
+            merged_labels = list(
+                dict.fromkeys(lbl for i in indices for lbl in (labels_col[i] or []))
+            )
+            update_row_ids.append(row_id_col[indices[0]])
+            update_mults.append(total_mult)
+            update_names.append(merged_names or None)
+            update_labels.append(merged_labels or None)
+            delete_indices.extend(indices[1:])
+
+        update_table = pa.table(
+            {
+                "multiplicity": pa.array(update_mults, type=pa.int32()),
+                "names": pa.array(update_names, type=pa.list_(pa.string())),
+                "labels": pa.array(update_labels, type=pa.list_(pa.string())),
+                "last_modified": pa.array(
+                    [get_last_modified()] * len(update_row_ids),
+                    type=pa.timestamp("us"),
+                ),
+                "$row_id": pa.array(update_row_ids, type=pa.uint64()),
+            }
+        )
+        return update_table, delete_indices
+
+    def deduplicate_co_po_table(self, table_name: str, batch_size: int = 5000) -> int:
+        """
+        Scan table_name for duplicate property_hash values, merge each group
+        into a single row (summing multiplicity, unioning names and labels),
+        and delete the extra rows. Processes duplicate hashes in batches to
+        bound memory use.
+
+        Returns the total number of rows deleted.
+        """
+        bucket_name, schema_name, table_n = self._get_table_split(table_name)
+        fetch_cols = ["property_hash", "multiplicity", "names", "labels"]
+        update_cols = ["multiplicity", "names", "labels", "last_modified"]
+
+        # Single pass: collect all needed columns + $row_id so we don't
+        # need a second select per duplicate batch.
+        hash_chunks, row_id_chunks, mult_chunks, names_chunks, labels_chunks = (
+            [],
+            [],
+            [],
+            [],
+            [],
+        )
+        with self.session.transaction() as tx:
+            vdb_table = tx.bucket(bucket_name).schema(schema_name).table(table_n)
+            for batch in vdb_table.select(
+                columns=fetch_cols,
+                internal_row_id=True,
+                config=self.query_config,
+            ):
+                hash_chunks.append(batch.column("property_hash"))
+                row_id_chunks.append(batch.column("$row_id"))
+                mult_chunks.append(batch.column("multiplicity"))
+                names_chunks.append(batch.column("names"))
+                labels_chunks.append(batch.column("labels"))
+
+        if not hash_chunks:
+            logger.info(f"No rows found in {table_name}")
+            return 0
+
+        all_hashes = pa.chunked_array(hash_chunks)
+        counts_struct = pc.value_counts(all_hashes)
+        dup_mask = pc.greater(counts_struct.field("counts"), 1)
+        dup_hashes = pc.filter(counts_struct.field("values"), dup_mask).to_pylist()
+
+        if not dup_hashes:
+            logger.info(f"No duplicate property_hash values found in {table_name}")
+            return 0
+
+        total_extra = int(
+            pc.sum(
+                pc.subtract(pc.filter(counts_struct.field("counts"), dup_mask), 1)
+            ).as_py()
+        )
+        logger.info(
+            f"Found {len(dup_hashes)} property_hash values with duplicates "
+            f"({total_extra} extra rows) in {table_name}"
+        )
+
+        # Build in-memory table of only the duplicate rows for batch processing.
+        full_table = pa.table(
+            {
+                "property_hash": all_hashes,
+                "multiplicity": pa.chunked_array(mult_chunks),
+                "names": pa.chunked_array(names_chunks),
+                "labels": pa.chunked_array(labels_chunks),
+                "$row_id": pa.chunked_array(row_id_chunks),
+            }
+        )
+        dup_table = full_table.filter(pc.is_in(all_hashes, pa.array(dup_hashes)))
+        del full_table
+
+        rows_deleted = 0
+        total_batches = (len(dup_hashes) + batch_size - 1) // batch_size
+        for hash_batch in tqdm(
+            batched(dup_hashes, batch_size),
+            total=total_batches,
+            desc="Deduplicating CO-PO table",
+        ):
+            batch_table = dup_table.filter(
+                pc.is_in(dup_table["property_hash"], pa.array(hash_batch))
+            )
+            update_table, delete_indices = self._build_dedup_updates(batch_table)
+
+            with self.session.transaction() as tx:
+                vdb_table = tx.bucket(bucket_name).schema(schema_name).table(table_n)
+                vdb_table.update(rows=update_table, columns=update_cols)
+
+            if delete_indices:
+                delete_row_ids = batch_table["$row_id"].take(
+                    pa.array(delete_indices, type=pa.int64())
+                )
+                delete_table = pa.table({"$row_id": delete_row_ids.cast(pa.uint64())})
+                with self.session.transaction() as tx:
+                    vdb_table = tx.bucket(bucket_name).schema(schema_name).table(table_n)
+                    for rb in delete_table.to_batches():
+                        vdb_table.delete(rows=rb)
+                rows_deleted += len(delete_indices)
+
+        logger.info(f"Deleted {rows_deleted} duplicate rows from {table_name}")
+        return rows_deleted
+
     def write_table_first(self, table: pa.Table, table_name: str):
         """Write new rows; return existing rows (for multiplicity update)."""
         identifier_dict = {
@@ -192,6 +356,7 @@ class VastDataLoader:
                     predicate=vdb_table[ider].isin(id_batch),
                     columns=[ider],
                     internal_row_id=False,
+                    config=self.query_config,
                 )
                 rec_batch = rec_batch.read_all()
                 if rec_batch.num_rows > 0:
@@ -269,7 +434,9 @@ class VastDataLoader:
                 if check_unique:
                     id_batch = rec_batch["id"].to_pylist()
                     id_rec_batch = vdb_table.select(
-                        predicate=vdb_table["id"].isin(id_batch), columns=["id"]
+                        predicate=vdb_table["id"].isin(id_batch),
+                        columns=["id"],
+                        config=self.query_config,
                     )
                     id_rec_batch = id_rec_batch.read_all()
                     if id_rec_batch.num_rows > 0:
@@ -326,6 +493,7 @@ class VastDataLoader:
                     predicate=vdb_table["property_hash"].isin(id_batch),
                     columns=["multiplicity", "property_hash"],
                     internal_row_id=True,
+                    config=self.query_config,
                 )
                 existing_table = rec_batch.read_all()
             existing_table = self.increment_multiplicity(df, existing_table)
@@ -361,6 +529,7 @@ class VastDataLoader:
                 & (vdb_table["multiplicity"] > 0),
                 columns=["property_hash", "multiplicity", "last_modified"],
                 internal_row_id=True,
+                config=self.query_config,
             )
             for rec_batch in rec_batches:
                 n = rec_batch.num_rows
@@ -389,17 +558,26 @@ class VastDataLoader:
         columns: list[str] = None,
     ) -> pa.Table:
         bucket_name, schema_name, table_n = self._get_table_split(query_table)
+        batches = []
+        schema = None
         with self.session.transaction() as tx:
             table = tx.bucket(bucket_name).schema(schema_name).table(table_n)
             rec_batch_reader = table.select(
                 predicate=predicate,
                 internal_row_id=internal_row_id,
                 columns=columns,
+                config=self.query_config,
             )
-            result = rec_batch_reader.read_all()
-        if result.num_rows == 0:
+            schema = rec_batch_reader.schema
+            while True:
+                try:
+                    batches.append(rec_batch_reader.read_next_batch())
+                except StopIteration:
+                    break
+        if not batches:
             logger.info(f"No records found for given query {predicate}")
-        return result
+            return pa.Table.from_batches([], schema=schema)
+        return pa.Table.from_batches(batches)
 
     def get_co_cs_mapping(self, cs_id: str):
         """
@@ -456,13 +634,128 @@ class VastDataLoader:
         )
         if name_match is not None:
             names_list = result["names"].to_pylist()
-            mask = pa.array([name_match in (names or []) for names in names_list])
+            mask = pa.array(
+                [
+                    any(re.search(name_match, n) for n in (names or []))
+                    for names in names_list
+                ]
+            )
             result = result.filter(mask)
         if label_match is not None:
             labels_list = result["labels"].to_pylist()
-            mask = pa.array([label_match in (labels or []) for labels in labels_list])
+            mask = pa.array(
+                [
+                    any(re.search(label_match, lbl) for lbl in (labels or []))
+                    for labels in labels_list
+                ]
+            )
             result = result.filter(mask)
         return result.select(config_df_cols)
+
+    def config_set_query_iter(
+        self,
+        dataset_id: str = None,
+        name_match: str = None,
+        label_match: str = None,
+    ):
+        """Yield RecordBatch objects for ConfigurationSet streaming aggregation."""
+        if dataset_id is None:
+            raise ValueError("dataset_id must be provided")
+        config_df_cols = [
+            "property_id",
+            "configuration_id",
+            "nsites",
+            "elements",
+            "nperiodic_dimensions",
+            "dimension_types",
+            "atomic_numbers",
+        ]
+        fetch_cols = list(config_df_cols)
+        if name_match is not None:
+            fetch_cols.append("names")
+        if label_match is not None:
+            fetch_cols.append("labels")
+        bucket_name, schema_name, table_n = self._get_table_split(self.config_table)
+        with self.session.transaction() as tx:
+            table = tx.bucket(bucket_name).schema(schema_name).table(table_n)
+            reader = table.select(
+                predicate=_.dataset_id == dataset_id,
+                columns=fetch_cols,
+                config=self.query_config,
+            )
+            while True:
+                try:
+                    batch = reader.read_next_batch()
+                except StopIteration:
+                    break
+                if batch.num_rows == 0:
+                    continue
+                if name_match is not None or label_match is not None:
+                    tbl = pa.Table.from_batches([batch])
+                    if name_match is not None:
+                        names_list = tbl["names"].to_pylist()
+                        mask = pa.array(
+                            [
+                                any(re.search(name_match, n) for n in (names or []))
+                                for names in names_list
+                            ]
+                        )
+                        tbl = tbl.filter(mask)
+                    if label_match is not None:
+                        labels_list = tbl["labels"].to_pylist()
+                        mask = pa.array(
+                            [
+                                any(
+                                    re.search(label_match, lbl) for lbl in (labels or [])
+                                )
+                                for labels in labels_list
+                            ]
+                        )
+                        tbl = tbl.filter(mask)
+                    for b in tbl.select(config_df_cols).to_batches():
+                        if b.num_rows > 0:
+                            yield b
+                else:
+                    yield batch.select(config_df_cols)
+
+    def dataset_query_iter(self, dataset_id: str, table_name: str):
+        """Yield RecordBatch objects for Dataset streaming aggregation."""
+        if dataset_id is None:
+            raise ValueError("dataset_id must be provided")
+        cols_needed = [
+            "property_id",
+            "configuration_id",
+            "elements",
+            "atomic_numbers",
+            "nsites",
+            "nperiodic_dimensions",
+            "dimension_types",
+            "atomization_energy",
+            "atomic_forces",
+            "adsorption_energy",
+            "electronic_band_gap",
+            "energy_above_hull",
+            "cauchy_stress",
+            "formation_energy",
+            "energy",
+            "method",
+            "software",
+        ]
+        bucket_name, schema_name, table_n = self._get_table_split(table_name)
+        with self.session.transaction() as tx:
+            table = tx.bucket(bucket_name).schema(schema_name).table(table_n)
+            reader = table.select(
+                predicate=_.dataset_id == dataset_id,
+                columns=cols_needed,
+                config=self.query_config,
+            )
+            while True:
+                try:
+                    batch = reader.read_next_batch()
+                except StopIteration:
+                    break
+                if batch.num_rows > 0:
+                    yield batch
 
     @staticmethod
     def rehash_property_objects(row: dict):
@@ -781,6 +1074,116 @@ class DataManager:
         logger.info("Garbage collecting")
         gc.collect()
 
+    def _write_co_po_batch(
+        self,
+        loader: VastDataLoader,
+        co_po_rows: list[tuple[dict, dict]],
+        check_existing: bool,
+        parquet_writer: ParquetWriter = None,
+    ) -> None:
+        """Write one accumulated batch of (co_row_dict, po_row_dict) pairs to VastDB."""
+        co_po_combined_rows = self.combine_co_po_rows(co_po_rows)
+        if parquet_writer is not None:
+            parquet_writer.add_co_rows(co_po_combined_rows)
+        co_count = len(co_po_combined_rows)
+        if co_count == 0:
+            return
+        co_table = pa.Table.from_pylist(co_po_combined_rows, schema=config_prop_schema)
+        del co_po_combined_rows
+        co_count_distinct = len(pc.unique(co_table["property_hash"]))
+        if co_count_distinct < co_count:
+            logger.info(
+                f"{co_count - co_count_distinct} duplicates found in CO-PO table"
+            )
+            dedup_rows = self.deduplicate_co_po_rows(co_table.to_pylist())
+            co_table = pa.Table.from_pylist(dedup_rows, schema=config_prop_schema)
+            co_count = co_table.num_rows
+            max_mult = pc.max(co_table["multiplicity"]).as_py()
+            logger.info(f"After dedup: {co_count} rows, max multiplicity={max_mult}")
+            del dedup_rows
+        if check_existing:
+            co_existing = loader.write_table_first(co_table, loader.config_table)
+            if co_existing is not None:
+                loader.update_existing_co_po_rows(
+                    df=co_existing, table_name=loader.config_table
+                )
+            del co_existing
+        else:
+            loader.write_table_no_check(co_table, loader.config_table)
+        logger.info(f"Wrote {co_count} rows to {loader.config_table}")
+        del co_table
+
+    def load_co_po_to_vastdb_parallel(
+        self,
+        loader: VastDataLoader,
+        worker_fn: Callable,
+        worker_args: list,
+        n_workers: int = 8,
+        write_batch_size: int = 100_000,
+        check_existing: bool = False,
+        parquet_writer: ParquetWriter = None,
+        progress_file=None,
+    ) -> None:
+        """
+        Parallel ingest for large datasets using a caller-supplied worker function.
+
+        worker_fn must be a top-level picklable function that accepts one element
+        of worker_args and returns (chunk_id, list[(co_row_dict, po_row_dict)]).
+        chunk_id must be JSON-serialisable; it is appended to progress_file (JSONL)
+        after the chunk's data is committed to VastDB.
+
+        Pass progress_file to enable crash-resume: on restart, load the file to
+        find completed chunk IDs and filter worker_args before calling this method.
+
+        Each worker runs in its own process (spawn context) with its own file
+        handles. VastDB writes are performed exclusively in the calling process,
+        one transaction per write_batch_size rows.
+        """
+        import json
+        import multiprocessing as mp
+
+        self.check_existing_tables(loader, batching_ingest=True)
+        ctx = mp.get_context("spawn")
+        # Accumulate (chunk_id, rows) pairs so chunk boundaries are preserved
+        # for accurate progress logging: IDs written only after VastDB commit.
+        chunk_accumulator: list[tuple] = []
+        acc_row_count = 0
+
+        def _flush(chunks):
+            flat_rows = [row for _, rows in chunks for row in rows]
+            self._write_co_po_batch(loader, flat_rows, check_existing, parquet_writer)
+            if progress_file is not None:
+                with open(progress_file, "a") as pf:
+                    for cid, _ in chunks:
+                        pf.write(json.dumps(cid) + "\n")
+
+        with ctx.Pool(processes=n_workers) as pool:
+            for chunk_id, batch in tqdm(
+                pool.imap_unordered(worker_fn, worker_args),
+                total=len(worker_args),
+                desc="Processing chunks",
+                unit="chunk",
+            ):
+                chunk_accumulator.append((chunk_id, batch))
+                acc_row_count += len(batch)
+
+                while acc_row_count >= write_batch_size:
+                    flush_chunks = []
+                    flush_count = 0
+                    while chunk_accumulator and flush_count < write_batch_size:
+                        cid, rows = chunk_accumulator.pop(0)
+                        flush_chunks.append((cid, rows))
+                        flush_count += len(rows)
+                        acc_row_count -= len(rows)
+                    _flush(flush_chunks)
+
+        if chunk_accumulator:
+            _flush(chunk_accumulator)
+
+        if parquet_writer:
+            parquet_writer.write_final("co")
+        gc.collect()
+
     def create_configuration_sets(
         self,
         loader: VastDataLoader,
@@ -798,19 +1201,13 @@ class DataManager:
         dataset_id = self.dataset_id
         config_set_rows = []
         co_cs_write_df = None
-        for i, (names_match, label_match, cs_name, cs_desc, ordered) in tqdm(
-            enumerate(name_label_match), desc="Creating Configuration Sets"
+        for names_match, label_match, cs_name, cs_desc, ordered in tqdm(
+            name_label_match, desc="Creating Configuration Sets"
         ):
             logger.info(
                 f"names match: {names_match}, label: {label_match}, "
                 f"cs_name: {cs_name}, cs_desc: {cs_desc}, ordered: {ordered}"
             )
-            config_df = loader.config_set_query(
-                dataset_id=dataset_id,
-                name_match=names_match,
-                label_match=label_match,
-            )
-            co_ids = pc.unique(config_df["configuration_id"].drop_null())
             t = time()
             prelim_cs_id = f"CS_{cs_name}_{self.dataset_id}"
             co_cs_exists = loader.get_co_cs_mapping(prelim_cs_id)
@@ -824,10 +1221,21 @@ class DataManager:
             config_set = ConfigurationSet(
                 name=cs_name,
                 description=cs_desc,
-                config_df=config_df,
+                config_batches=loader.config_set_query_iter(
+                    dataset_id=dataset_id,
+                    name_match=names_match,
+                    label_match=label_match,
+                ),
                 dataset_id=self.dataset_id,
                 ordered=ordered,
             )
+            if config_set.row_dict["nconfigurations"] == 0:
+                logger.warning(
+                    f"No configurations matched for CS '{cs_name}' "
+                    f"(name={names_match!r}, label={label_match!r}), skipping"
+                )
+                continue
+            co_ids = pa.array(config_set.configuration_ids)
             co_ids_table = pa.table(
                 {
                     "configuration_id": co_ids,
@@ -890,13 +1298,12 @@ class DataManager:
         else:
             cs_ids = None
         logger.info(f"Configuration Set IDs: {cs_ids}")
-        config_df = loader.dataset_query(
-            dataset_id=self.dataset_id, table_name=loader.config_table
-        )
         ds = Dataset(
             name=name,
             authors=authors,
-            config_df=config_df,
+            config_batches=loader.dataset_query_iter(
+                dataset_id=self.dataset_id, table_name=loader.config_table
+            ),
             publication_link=publication_link,
             data_link=data_link,
             description=description,

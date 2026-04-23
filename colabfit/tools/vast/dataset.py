@@ -1,10 +1,7 @@
-import itertools
 import logging
 from collections import Counter
 from datetime import datetime
 
-import pyarrow as pa
-import pyarrow.compute as pc
 from unidecode import unidecode
 
 from colabfit import MAX_STRING_LENGTH
@@ -65,7 +62,7 @@ class Dataset(DataObject):
         publication_link: str,
         data_link: str,
         description: str,
-        config_df,
+        config_batches,
         other_links: list[str] = None,
         dataset_id: str = None,
         labels: list[str] = None,
@@ -100,7 +97,7 @@ class Dataset(DataObject):
         self.equilibrium = equilibrium
         if self.configuration_set_ids is None:
             self.configuration_set_ids = []
-        self.row_dict = self.to_row_dict(config_df=config_df)
+        self.row_dict = self.to_row_dict(config_batches=config_batches)
         self.row_dict["date_added_to_colabfit"] = get_date()
         assert datetime.strptime(date_requested, "%Y-%m-%d")
         self.row_dict["date_requested"] = datetime.strptime(date_requested, "%Y-%m-%d")
@@ -124,68 +121,111 @@ class Dataset(DataObject):
         """Return the keys used for Dataset identification."""
         return ["extended_id"]
 
-    def to_row_dict(self, config_df: pa.Table):
+    def to_row_dict(self, config_batches):
         row_dict = _empty_dict_from_schema(dataset_schema)
         row_dict["last_modified"] = get_last_modified()
         row_dict["nconfiguration_sets"] = len(self.configuration_set_ids)
 
-        config_df = config_df.select(
-            [
-                "property_id",
-                "configuration_id",
-                "elements",
-                "atomic_numbers",
-                "nsites",
-                "nperiodic_dimensions",
-                "dimension_types",
-                "atomization_energy",
-                "atomic_forces",
-                "adsorption_energy",
-                "electronic_band_gap",
-                "energy_above_hull",
-                "cauchy_stress",
-                "formation_energy",
-                "energy",
-                "method",
-                "software",
-            ]
-        )
-
-        row_dict["nconfigurations"] = len(
-            pc.unique(config_df["configuration_id"].drop_null())
-        )
-        row_dict["nsites"] = pc.sum(config_df["nsites"]).as_py()
-
-        row_dict["nperiodic_dimensions"] = (
-            pc.unique(config_df["nperiodic_dimensions"]).drop_null().to_pylist()
-        )
-
-        seen_dim_types = set()
+        seen_configs = set()
+        seen_props = set()
+        nsites = 0
+        seen_nperiodic = set()
+        seen_dim_type_keys = set()
         unique_dim_types = []
-        for dt in config_df["dimension_types"].to_pylist():
-            if dt is not None:
-                key = tuple(dt)
-                if key not in seen_dim_types:
-                    seen_dim_types.add(key)
-                    unique_dim_types.append(dt)
-        row_dict["dimension_types"] = unique_dim_types
-
-        row_dict["methods"] = pc.unique(config_df["method"]).drop_null().to_pylist()
-        row_dict["software"] = pc.unique(config_df["software"]).drop_null().to_pylist()
-
         all_elements = set()
-        for elem_list in config_df["elements"].to_pylist():
-            if elem_list:
-                all_elements.update(elem_list)
+        element_counts = Counter()
+        seen_methods = set()
+        seen_software = set()
+        prop_counts = {
+            "atomization_energy": 0,
+            "adsorption_energy": 0,
+            "electronic_band_gap": 0,
+            "cauchy_stress": 0,
+            "energy_above_hull": 0,
+            "formation_energy": 0,
+            "energy": 0,
+        }
+        atomic_forces_count = 0
+        energy_n = 0
+        energy_mean_acc = 0.0
+        energy_m2 = 0.0
+
+        for batch in config_batches:
+            prop_ids = batch.column("property_id").to_pylist()
+            config_ids = batch.column("configuration_id").to_pylist()
+            nsites_col = batch.column("nsites").to_pylist()
+            nperiodic_col = batch.column("nperiodic_dimensions").to_pylist()
+            dim_types_col = batch.column("dimension_types").to_pylist()
+            elements_col = batch.column("elements").to_pylist()
+            atomic_nums_col = batch.column("atomic_numbers").to_pylist()
+            method_col = batch.column("method").to_pylist()
+            software_col = batch.column("software").to_pylist()
+            atomization_col = batch.column("atomization_energy").to_pylist()
+            adsorption_col = batch.column("adsorption_energy").to_pylist()
+            band_gap_col = batch.column("electronic_band_gap").to_pylist()
+            cauchy_col = batch.column("cauchy_stress").to_pylist()
+            hull_col = batch.column("energy_above_hull").to_pylist()
+            formation_col = batch.column("formation_energy").to_pylist()
+            energy_col = batch.column("energy").to_pylist()
+            forces_col = batch.column("atomic_forces").to_pylist()
+
+            for i in range(len(prop_ids)):
+                if config_ids[i] is not None:
+                    seen_configs.add(config_ids[i])
+                if prop_ids[i] is not None:
+                    seen_props.add(prop_ids[i])
+                nsites += nsites_col[i] or 0
+                npd = nperiodic_col[i]
+                if npd is not None:
+                    seen_nperiodic.add(npd)
+                dt = dim_types_col[i]
+                if dt is not None:
+                    key = tuple(dt)
+                    if key not in seen_dim_type_keys:
+                        seen_dim_type_keys.add(key)
+                        unique_dim_types.append(dt)
+                elems = elements_col[i]
+                if elems:
+                    all_elements.update(elems)
+                nums = atomic_nums_col[i]
+                if nums:
+                    element_counts.update(nums)
+                if method_col[i] is not None:
+                    seen_methods.add(method_col[i])
+                if software_col[i] is not None:
+                    seen_software.add(software_col[i])
+                if atomization_col[i] is not None:
+                    prop_counts["atomization_energy"] += 1
+                if adsorption_col[i] is not None:
+                    prop_counts["adsorption_energy"] += 1
+                if band_gap_col[i] is not None:
+                    prop_counts["electronic_band_gap"] += 1
+                if cauchy_col[i] is not None:
+                    prop_counts["cauchy_stress"] += 1
+                if hull_col[i] is not None:
+                    prop_counts["energy_above_hull"] += 1
+                if formation_col[i] is not None:
+                    prop_counts["formation_energy"] += 1
+                e = energy_col[i]
+                if e is not None:
+                    prop_counts["energy"] += 1
+                    energy_n += 1
+                    delta = e - energy_mean_acc
+                    energy_mean_acc += delta / energy_n
+                    energy_m2 += delta * (e - energy_mean_acc)
+                af = forces_col[i]
+                if af is not None and len(af) > 0:
+                    atomic_forces_count += 1
+
+        row_dict["nconfigurations"] = len(seen_configs)
+        row_dict["nsites"] = nsites
+        row_dict["nperiodic_dimensions"] = sorted(seen_nperiodic)
+        row_dict["dimension_types"] = unique_dim_types
+        row_dict["methods"] = sorted(seen_methods)
+        row_dict["software"] = sorted(seen_software)
         row_dict["elements"] = sorted(list(all_elements))
         row_dict["nelements"] = len(row_dict["elements"])
 
-        all_nums = list(
-            itertools.chain.from_iterable(
-                row for row in config_df["atomic_numbers"].to_pylist() if row
-            )
-        )
-        element_counts = Counter(all_nums)
         total_elements = sum(element_counts.values())
         logger.info(f'{total_elements} {row_dict["nsites"]}')
         assert total_elements == row_dict["nsites"]
@@ -198,33 +238,14 @@ class Dataset(DataObject):
             element_symbol_counts[sym] / total_elements for sym in sorted_symbols
         ]
 
-        row_dict["nproperty_objects"] = len(
-            pc.unique(config_df["property_id"].drop_null())
-        )
-
-        property_cols = [
-            "atomization_energy",
-            "adsorption_energy",
-            "electronic_band_gap",
-            "cauchy_stress",
-            "energy_above_hull",
-            "formation_energy",
-            "energy",
-        ]
-        for prop_col in property_cols:
-            count = pc.count(config_df[prop_col], mode="only_valid").as_py()
+        row_dict["nproperty_objects"] = len(seen_props)
+        for prop_col, count in prop_counts.items():
             row_dict[f"{prop_col}_count"] = count
+        row_dict["atomic_forces_count"] = atomic_forces_count
 
-        valid_forces = pc.and_kleene(
-            pc.is_valid(config_df["atomic_forces"]),
-            pc.greater(pc.list_value_length(config_df["atomic_forces"]), 0),
-        )
-        row_dict["atomic_forces_count"] = pc.sum(valid_forces.cast(pa.int64())).as_py()
-
-        energy_valid = config_df.filter(pc.is_valid(config_df["energy"]))["energy"]
-        if len(energy_valid) > 0:
-            row_dict["energy_variance"] = pc.variance(energy_valid).as_py()
-            row_dict["energy_mean"] = pc.mean(energy_valid).as_py()
+        if energy_n > 0:
+            row_dict["energy_variance"] = energy_m2 / energy_n
+            row_dict["energy_mean"] = energy_mean_acc
         else:
             row_dict["energy_variance"] = None
             row_dict["energy_mean"] = None
