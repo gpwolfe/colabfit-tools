@@ -81,7 +81,7 @@ atomization_energy_pd = {
     "property-id": "tag:staff@noreply.colabfit.org,2022-11-18:property/atomization-energy",
     "property-name": "atomization-energy",
     "property-title": "Atomization energy from a static calculation",
-    "property-description": "Formation energy from a calculation of a static "
+    "property-description": "Atomization energy from a calculation of a static "
     "configuration which uses atomic systems to compute reference energies. Energies "
     "must be specified to be per-atom if true. If the reference energies are known, "
     "these must be specified as well.",

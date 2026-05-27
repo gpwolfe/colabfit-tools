@@ -325,8 +325,10 @@ class VastDataLoader:
                 delete_table = pa.table({"$row_id": delete_row_ids.cast(pa.uint64())})
                 with self.session.transaction() as tx:
                     vdb_table = tx.bucket(bucket_name).schema(schema_name).table(table_n)
-                    for rb in delete_table.to_batches():
-                        vdb_table.delete(rows=rb)
+                    logger.info(
+                        f"Deleting {len(delete_indices)} duplicate rows from {table_name}"
+                    )
+                    vdb_table.delete(rows=delete_table)
                 rows_deleted += len(delete_indices)
 
         logger.info(f"Deleted {rows_deleted} duplicate rows from {table_name}")
