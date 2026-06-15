@@ -25,12 +25,10 @@ from colabfit.tools.pg.dataset import Dataset
 from colabfit.tools.pg.property import Property
 from colabfit.tools.pg.schema import (
     config_md_schema,
-    config_schema,
     configuration_set_schema,
     dataset_schema,
     property_definition_schema,
     property_object_md_schema,
-    property_object_schema,
 )
 from colabfit.tools.pg.utilities import get_last_modified
 
@@ -162,30 +160,6 @@ class DataManager:
                         )
                     )
 
-    def load_data_loader_call(self, loader):
-        """Load data to PostgreSQL in batches."""
-        co_po_rows = self.gather_co_po_in_batches()
-
-        for co_po_batch in tqdm(
-            co_po_rows,
-            desc="Loading data to database: ",
-            unit="batch",
-        ):
-            co_rows, po_rows = list(zip(*co_po_batch))
-            if len(co_rows) == 0:
-                continue
-            else:
-                loader.write_table(
-                    co_rows,
-                    loader.config_table,
-                    config_schema,
-                )
-                loader.write_table(
-                    po_rows,
-                    loader.prop_object_table,
-                    property_object_schema,
-                )
-
     @staticmethod
     def get_co_sql():
         columns = [x.name for x in config_md_schema.columns]
@@ -238,15 +212,37 @@ class DataManager:
     def co_row_to_values(row_dict):
         name = row_dict["names"][0]
         dataset_id = row_dict["dataset_ids"][0]
-        vals = [row_dict.get(k) for k in config_md_schema.columns]
+        vals = [row_dict.get(k) for k in config_md_schema.column_names]
         vals.append(dataset_id)
         vals.append(name)
         return vals
 
     @staticmethod
     def po_row_to_values(row_dict):
-        vals = [row_dict.get(k) for k in property_object_md_schema.columns]
+        vals = [row_dict.get(k) for k in property_object_md_schema.column_names]
         return vals
+
+    @staticmethod
+    def get_ds_sql():
+        """Build the datasets INSERT from dataset_schema so the column list
+        stays in sync with the schema definition."""
+        columns = dataset_schema.column_names
+        sql_compose = sql.SQL(" ").join(
+            [
+                sql.SQL("INSERT INTO"),
+                sql.Identifier(dataset_schema.name),
+                sql.SQL("("),
+                sql.SQL(",").join(map(sql.Identifier, columns)),
+                sql.SQL(") VALUES ("),
+                sql.SQL(",").join(sql.Placeholder() * len(columns)),
+                sql.SQL(") ON CONFLICT (hash) DO NOTHING;"),
+            ]
+        )
+        return sql_compose
+
+    @staticmethod
+    def ds_row_to_values(row_dict):
+        return [row_dict.get(k) for k in dataset_schema.column_names]
 
     def load_data_in_batches(
         self,
@@ -390,8 +386,6 @@ class DataManager:
         doi: str = None,
         labels: list[str] = None,
         data_license: str = "CC-BY-4.0",
-        config_table=None,
-        prop_object_table=None,
         prop_map=None,
     ):
 
@@ -409,9 +403,7 @@ class DataManager:
                     "Configs must be an instance of either ase.Atoms or AtomicConfiguration"  # noqa E501
                 )
 
-        self.load_data_in_batches(
-            converted_configs, dataset_id, config_table, prop_object_table, prop_map
-        )
+        self.load_data_in_batches(converted_configs, dataset_id, prop_map)
         self.create_dataset(
             name,
             dataset_id,
@@ -490,24 +482,8 @@ class DataManager:
         )
         row = ds.row_dict
 
-        sql = """
-            INSERT INTO datasets (last_modified, nconfigurations, nproperty_objects, nsites, nelements, elements, total_elements_ratio, nperiodic_dimensions, dimension_types, energy_mean, energy_variance, atomic_forces_count, cauchy_stress_count, energy_count, authors, description, license, links, name, publication_year, doi, id, extended_id, hash, labels)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,%s, %s)
-            ON CONFLICT (hash)
-            DO NOTHING
-        """
-
-        column_headers = tuple(row.keys())
-        values = []
-        t = []
-        for column in column_headers:
-            if column in ["nconfiguration_sets"]:
-                pass
-            else:
-                val = row[column]
-                t.append(val)
-            values.append(t)
-
+        ds_sql = self.get_ds_sql()
+        values = self.ds_row_to_values(row)
         with psycopg.connect(
             dbname=self.dbname,
             user=self.user,
@@ -516,7 +492,7 @@ class DataManager:
             password=self.password,
         ) as conn:
             with conn.cursor() as curs:
-                curs.executemany(sql, values)
+                curs.execute(ds_sql, values)
 
     def insert_new_column(self, table, column_name, data_type):
         sql = f"""
@@ -586,24 +562,8 @@ class DataManager:
         )
         row = ds.row_dict
 
-        sql = """
-            INSERT INTO datasets (last_modified, nconfigurations, nproperty_objects, nsites, nelements, elements, total_elements_ratio, nperiodic_dimensions, dimension_types, energy_mean, energy_variance, atomic_forces_count, cauchy_stress_count, energy_count, authors, description, license, links, name, publication_year, doi, id, extended_id, hash, labels)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,%s, %s)
-            ON CONFLICT (hash)
-            DO NOTHING
-        """
-
-        column_headers = tuple(row.keys())
-        values = []
-        t = []
-        for column in column_headers:
-            if column in ["nconfiguration_sets"]:
-                pass
-            else:
-                val = row[column]
-                t.append(val)
-            values.append(t)
-
+        ds_sql = self.get_ds_sql()
+        values = self.ds_row_to_values(row)
         with psycopg.connect(
             dbname=self.dbname,
             user=self.user,
@@ -612,7 +572,7 @@ class DataManager:
             password=self.password,
         ) as conn:
             with conn.cursor() as curs:
-                curs.executemany(sql, values)
+                curs.execute(ds_sql, values)
                 return new_dataset_id
 
     def get_dataset_data(self, dataset_id):

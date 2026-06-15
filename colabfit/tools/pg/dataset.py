@@ -149,7 +149,7 @@ class Dataset:
         row_dict["nsites"] = nsites
         row_dict["nelements"] = len(sorted_elements)
         row_dict["elements"] = sorted_elements
-        row_dict["total_elements_ratio"] = [
+        row_dict["total_elements_ratios"] = [
             element_dict[e] / nsites for e in sorted_elements
         ]
         row_dict["nperiodic_dimensions"] = list(nperiodic_dimensions)

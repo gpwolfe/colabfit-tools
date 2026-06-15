@@ -10,7 +10,7 @@ import numpy as np
 def _format_for_hash(v):
     if isinstance(v, np.ndarray):
         if np.issubdtype(v.dtype, np.floating):
-            return np.round_(v.astype(np.float64), decimals=16)
+            return np.round(v.astype(np.float64), decimals=16)
         elif np.issubdtype(v.dtype, np.integer):
             return v.astype(np.int64)
         elif np.issubdtype(v.dtype, bool):
@@ -46,7 +46,9 @@ def _hash(row, identifying_key_list, include_keys_in_hash=False):
 
 
 def get_last_modified():
-    return datetime.datetime.now(tz=datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.datetime.now(tz=datetime.timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
 
 
 def _empty_dict_from_schema(schema):
