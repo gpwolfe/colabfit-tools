@@ -9,6 +9,7 @@ from colabfit.tools.pg.utilities import (
     _empty_dict_from_schema,
     _hash,
     _parse_unstructured_metadata,
+    config_struct_hash,
     get_last_modified,
 )
 
@@ -42,10 +43,11 @@ class AtomicConfiguration(Atoms):
                 Other keyword arguments that can be passed to
                 :meth:`ase.Atoms.__init__()`
         """
-        if ATOMS_NAME_FIELD in info:
-            names = info[ATOMS_NAME_FIELD]
-        else:
-            names = None
+        if not isinstance(info, dict):
+            raise TypeError(f"info must be a dict, got {type(info).__name__}")
+        if ATOMS_NAME_FIELD not in info:
+            raise ValueError(f"info must contain the {ATOMS_NAME_FIELD} field")
+        names = info[ATOMS_NAME_FIELD]
         if "atomic_numbers" in list(kwargs.keys()):
             kwargs["numbers"] = kwargs.pop("atomic_numbers")
 
@@ -76,12 +78,12 @@ class AtomicConfiguration(Atoms):
         else:
             self.labels = labels
         self.row_dict = self.to_row_dict()
-        self._hash = hash(self)
+        self._hash = _hash(self.row_dict, sorted(self.unique_identifier_kw), False)
         self.id = f"CO_{self._hash}"
-
+        if len(self.id) > 28:
+            self.id = self.id[:28]
         self.row_dict["id"] = self.id
-        self.row_dict["hash"] = str(self._hash)
-        self.row_dict = self.row_dict
+        self.row_dict["hash"] = self._hash
         # Check for name conflicts in info/arrays; would cause bug in parsing
         if set(self.info.keys()).intersection(set(self.arrays.keys())):
             raise RuntimeError(
@@ -233,6 +235,12 @@ class AtomicConfiguration(Atoms):
         co_dict["pbc"] = pbc.astype(bool).tolist()
         co_dict["last_modified"] = get_last_modified()
         co_dict["atomic_numbers"] = self.numbers.astype(int).tolist()
+        co_dict["structure_hash"] = config_struct_hash(
+            co_dict["atomic_numbers"],
+            co_dict["cell"],
+            co_dict["pbc"],
+            co_dict["positions"],
+        )
         # if self.metadata is not None:
         #    co_dict.update(self.metadata)
         co_dict.update(self.configuration_summary())
@@ -314,7 +322,7 @@ class AtomicConfiguration(Atoms):
         Returns:
             dict: Aggregated Configuration information
         """
-        return NotImplementedError
+        raise NotImplementedError
 
     def __str__(self):
         ase_str = super().__str__()
@@ -323,4 +331,4 @@ class AtomicConfiguration(Atoms):
         )
 
     def __hash__(self):
-        return _hash(self.row_dict, sorted(self.unique_identifier_kw), False)
+        return int(_hash(self.row_dict, sorted(self.unique_identifier_kw), False), 16)

@@ -18,7 +18,11 @@ from kim_property.definition import PROPERTY_ID as VALID_KIM_ID
 
 from colabfit.tools.pg.configuration import AtomicConfiguration
 from colabfit.tools.pg.schema import property_object_md_schema
-from colabfit.tools.pg.utilities import _empty_dict_from_schema, _hash, get_last_modified
+from colabfit.tools.pg.utilities import (
+    _empty_dict_from_schema,
+    _hash,
+    get_last_modified,
+)
 
 EDN_KEY_MAP = {
     "energy": "unrelaxed-potential-energy",
@@ -530,7 +534,9 @@ class Property(dict):
             if "per-atom" in prop_dict:
                 if prop_dict["per-atom"]["source-value"] is True:
                     if self.nsites is None:
-                        raise RuntimeError("nsites must be provided to convert per-atom")
+                        raise RuntimeError(
+                            "nsites must be provided to convert per-atom"
+                        )
                     prop_val *= self.nsites
 
             if units != p_info.unit:
@@ -572,9 +578,12 @@ class Property(dict):
 
     def __hash__(self):
 
-        return _hash(
-            self.row_dict,
-            sorted(self.unique_identifier_kw),
+        return int(
+            _hash(
+                self.row_dict,
+                sorted(self.unique_identifier_kw),
+            ),
+            16,
         )
 
     def __eq__(self, other):
@@ -702,7 +711,9 @@ class PropertyMap:
     """
 
     def __init__(self, property_definitions: list):
-        self.property_definitions = {p["property-name"]: p for p in property_definitions}
+        self.property_definitions = {
+            p["property-name"]: p for p in property_definitions
+        }
         self._metadata = {
             "software": {"value": None, "required": True},
             "method": {"value": None, "required": True},
@@ -727,7 +738,9 @@ class PropertyMap:
     def get_metadata(self):
         self.validate_metadata()
         return {
-            k: v for k, v in self._metadata.items() if (v.get("value") or v.get("field"))
+            k: v
+            for k, v in self._metadata.items()
+            if (v.get("value") or v.get("field"))
         }
 
     def set_property(
@@ -760,7 +773,9 @@ class PropertyMap:
                 units = prop["units"]
                 original_file_key = prop["original_file_key"]
                 additional = prop.get("additional", [])
-                self.set_property(prop_name, field, units, original_file_key, additional)
+                self.set_property(
+                    prop_name, field, units, original_file_key, additional
+                )
             elif isinstance(prop, property_info):
                 prop_name = prop.property_name
                 field = prop.field
@@ -769,7 +784,9 @@ class PropertyMap:
                 additional = prop.additional
                 if additional is None:
                     additional = []
-                self.set_property(prop_name, field, units, original_file_key, additional)
+                self.set_property(
+                    prop_name, field, units, original_file_key, additional
+                )
         self.validate_properties()
 
     def get_property(self, property_name: str):
@@ -828,7 +845,9 @@ class PropertyMap:
                     continue
                 elif val.get("has-unit") and prop_view.get("units") is None:
                     raise ValueError(f"Property '{prop_name}' must have 'units' set.")
-                elif val.get("has-unit") is False and prop_view.get("units") is not None:
+                elif (
+                    val.get("has-unit") is False and prop_view.get("units") is not None
+                ):
                     raise ValueError(
                         f"Property '{prop_name}' must have key {key}: 'units' set to None."  # noqa E501
                     )

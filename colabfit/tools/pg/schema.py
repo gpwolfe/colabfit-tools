@@ -53,6 +53,7 @@ config_schema = Schema(
         column("pbc", "BOOL []", True),
         column("names", "VARCHAR (256) []", True),
         column("labels", "VARCHAR (256) []", True),
+        column("structure_hash", "VARCHAR (256)", True),
         column("positions", "DOUBLE PRECISION [] []", True),
     ],
 )
