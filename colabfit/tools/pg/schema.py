@@ -38,7 +38,6 @@ config_schema = Schema(
         column("hash", "VARCHAR (256) PRIMARY KEY", True),
         column("last_modified", "VARCHAR (256)", True),
         column("dataset_ids", "VARCHAR (256) []", True),
-        column("configuration_set_ids", "VARCHAR (256) []", True),
         column("chemical_formula_hill", "VARCHAR (256)", True),
         column("chemical_formula_reduced", "VARCHAR (256)", True),
         column("chemical_formula_anonymous", "VARCHAR (256)", True),
@@ -57,8 +56,6 @@ config_schema = Schema(
         column("positions", "DOUBLE PRECISION [] []", True),
     ],
 )
-
-config_md_schema = config_schema.add(column("metadata", "VARCHAR (10000)", True))
 
 
 property_object_schema = Schema(
@@ -82,11 +79,11 @@ property_object_schema = Schema(
         column("formation_energy", "DOUBLE PRECISION", True),
         column("adsorption_energy", "DOUBLE PRECISION", True),
         column("atomization_energy", "DOUBLE PRECISION", True),
+        column("energy_above_hull", "DOUBLE PRECISION", True),
+        column("max_force_norm", "DOUBLE PRECISION", True),
+        column("mean_force_norm", "DOUBLE PRECISION", True),
+        column("metadata", "JSONB", True),
     ],
-)
-
-property_object_md_schema = property_object_schema.add(
-    column("metadata", "VARCHAR (10000)", True)
 )
 
 dataset_schema = Schema(
@@ -113,13 +110,19 @@ dataset_schema = Schema(
         column("atomic_forces_count", "INT", True),
         column("electronic_band_gap_count", "INT", True),
         column("cauchy_stress_count", "INT", True),
-        column("authors", "VARCHAR (256)", True),
+        column("energy_above_hull_count", "INT", True),
+        column("authors", "VARCHAR (256) []", True),
         column("description", "VARCHAR (10000)", True),
         column("extended_id", "VARCHAR (1000)", True),
         column("license", "VARCHAR (256)", True),
         column("links", "VARCHAR (1000) []", True),
         column("publication_year", "VARCHAR (256)", True),
         column("doi", "VARCHAR (256)", True),
+        column("equilibrium", "BOOL", True),
+        column("methods", "VARCHAR (256) []", True),
+        column("software", "VARCHAR (256) []", True),
+        column("date_added_to_colabfit", "VARCHAR (256)", True),
+        column("date_requested", "VARCHAR (256)", True),
     ],
 )
 
@@ -145,11 +148,11 @@ configuration_set_schema = Schema(
     ],
 )
 
-co_cs_mapping_schema = Schema(
-    name="config_set_mapping",
+co_cs_map_schema = Schema(
+    name="configuration_set_configuration_map",
     columns=[
-        column("configuration_id", "VARCHAR (256)", True),
         column("configuration_set_id", "VARCHAR (256)", True),
+        column("configuration_id", "VARCHAR (256)", True),
     ],
 )
 

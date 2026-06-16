@@ -2,7 +2,13 @@ import warnings
 from unidecode import unidecode
 
 from colabfit import MAX_STRING_LENGTH
-from colabfit.tools.pg.utilities import ELEMENT_MAP, _hash, get_last_modified
+from colabfit.tools.pg.schema import dataset_schema
+from colabfit.tools.pg.utilities import (
+    ELEMENT_MAP,
+    _empty_dict_from_schema,
+    _hash,
+    get_last_modified,
+)
 
 import numpy as np
 
@@ -83,6 +89,14 @@ class Dataset:
         data_license: str = "CC-BY-ND-4.0",
         publication_year: str = None,
     ):
+        if not isinstance(authors, list):
+            raise TypeError("authors must be a list of strings")
+        if publication_year is not None and not (
+            isinstance(publication_year, str)
+            and publication_year.isdigit()
+            and len(publication_year) == 4
+        ):
+            raise ValueError("publication_year must be a 4-digit year string")
         for auth in authors:
             if not "".join(auth.split(" ")[-1].replace("-", "")).isalpha():
                 raise RuntimeError(
@@ -118,14 +132,13 @@ class Dataset:
         extended_id = f"{id_prefix}__{dataset_id}"
         self.row_dict["extended_id"] = extended_id
         self._hash = _hash(self.row_dict, ["extended_id"])
-        self.row_dict["hash"] = str(self._hash)
+        self.row_dict["hash"] = self._hash
         self.row_dict["labels"] = labels
 
     # aggregate stuff
     def to_row_dict(self, configs, props):
-        row_dict = {}
+        row_dict = _empty_dict_from_schema(dataset_schema)
         row_dict["last_modified"] = get_last_modified()
-        row_dict["nconfiguration_sets"] = len(self.configuration_set_ids)
         row_dict["nconfigurations"] = len(configs)
         row_dict["nproperty_objects"] = len(props)
         nsites = 0
@@ -136,43 +149,60 @@ class Dataset:
         for c in configs:
             nsites += c["nsites"]
             for e in c["atomic_numbers"]:
-                e = ELEMENT_MAP[e]
-                if e in element_dict:
-                    element_dict[e] += 1
-                else:
-                    element_dict[e] = 1
+                el = ELEMENT_MAP[e]
+                element_dict[el] = element_dict.get(el, 0) + 1
             nperiodic_dimensions.add(c["nperiodic_dimensions"])
             dimension_types.add(str(c["dimension_types"]))
 
-        sorted_elements = sorted(list(element_dict.keys()))
+        sorted_elements = sorted(element_dict.keys())
 
         row_dict["nsites"] = nsites
         row_dict["nelements"] = len(sorted_elements)
         row_dict["elements"] = sorted_elements
-        row_dict["total_elements_ratios"] = [
-            element_dict[e] / nsites for e in sorted_elements
-        ]
+        row_dict["total_elements_ratios"] = (
+            [element_dict[e] / nsites for e in sorted_elements] if nsites else []
+        )
         row_dict["nperiodic_dimensions"] = list(nperiodic_dimensions)
         row_dict["dimension_types"] = list(dimension_types)
 
-        forces = 0
-        stress = 0
-        energy = 0
+        # Per-property counts, keyed by the property-object column names.
+        count_keys = [
+            "energy",
+            "atomic_forces",
+            "cauchy_stress",
+            "electronic_band_gap",
+            "formation_energy",
+            "adsorption_energy",
+            "atomization_energy",
+            "energy_above_hull",
+        ]
+        counts = {k: 0 for k in count_keys}
         energies = []
+        methods = set()
+        software = set()
         for p in props:
-            if p["atomic_forces_forces"] is not None:
-                forces += 1
-            if p["cauchy_stress_stress"] is not None:
-                stress += 1
-            if p["energy_energy"] is not None:
-                energy += 1
-                energies.append(p["energy_energy"])
+            for k in count_keys:
+                if p.get(k) is not None:
+                    counts[k] += 1
+            if p.get("energy") is not None:
+                energies.append(p["energy"])
+            if p.get("method") is not None:
+                methods.add(p["method"])
+            if p.get("software") is not None:
+                software.add(p["software"])
 
-        row_dict["energy_mean"] = np.mean(energies)
-        row_dict["energy_variance"] = np.var(energies)
-        row_dict["atomic_forces_count"] = forces
-        row_dict["cauchy_stress_count"] = stress
-        row_dict["energy_count"] = energy
+        row_dict["energy_count"] = counts["energy"]
+        row_dict["atomic_forces_count"] = counts["atomic_forces"]
+        row_dict["cauchy_stress_count"] = counts["cauchy_stress"]
+        row_dict["electronic_band_gap_count"] = counts["electronic_band_gap"]
+        row_dict["formation_energy_count"] = counts["formation_energy"]
+        row_dict["adsorption_energy_count"] = counts["adsorption_energy"]
+        row_dict["atomization_energy_count"] = counts["atomization_energy"]
+        row_dict["energy_above_hull_count"] = counts["energy_above_hull"]
+        row_dict["energy_mean"] = float(np.mean(energies)) if energies else None
+        row_dict["energy_variance"] = float(np.var(energies)) if energies else None
+        row_dict["methods"] = sorted(methods)
+        row_dict["software"] = sorted(software)
         row_dict["authors"] = self.authors
         row_dict["description"] = self.description
         row_dict["license"] = self.data_license
@@ -192,9 +222,9 @@ class Dataset:
     def __str__(self):
         return (
             f"Dataset(description='{self.description}', "
-            f"nconfiguration_sets={len(self.row_dict['configuration_sets'])}, "
+            f"nconfiguration_sets={len(self.configuration_set_ids)}, "
             f"nproperty_objects={self.row_dict['nproperty_objects']}, "
-            f"nconfigurations={self.row_dict['nconfigurations']}"
+            f"nconfigurations={self.row_dict['nconfigurations']})"
         )
 
     def __repr__(self):

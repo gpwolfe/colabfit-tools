@@ -1,10 +1,10 @@
 import datetime
 import json
-import os
-import sys
 from hashlib import sha512
 
 import numpy as np
+
+METADATA_MAX_CHARS = 10_000
 
 
 def _format_for_hash(v):
@@ -79,9 +79,7 @@ def config_struct_hash(atomic_numbers, cell, pbc, positions):
 
 
 def get_last_modified():
-    return datetime.datetime.now(tz=datetime.timezone.utc).strftime(
-        "%Y-%m-%dT%H:%M:%SZ"
-    )
+    return datetime.datetime.now(tz=datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _empty_dict_from_schema(schema):
@@ -98,13 +96,13 @@ def _sort_dict(dictionary):
 
 
 def _parse_unstructured_metadata(md_json):
-    if md_json == {}:
-        return {
-            "metadata": None,
-            "metadata_id": None,
-            "metadata_path": None,
-            "metadata_size": None,
-        }
+    """Return ``{"metadata": <sorted dict>}`` for storage in a JSONB column.
+
+    Value is kept as a dict with deterministic, recursively sorted keys.
+    A size guard is enforced against the serialized form.
+    """
+    if not md_json:
+        return {"metadata": None}
     md = {}
     for key, val in md_json.items():
         if key in ["_id", "hash", "colabfit-id", "last_modified", "software", "method"]:
@@ -122,19 +120,14 @@ def _parse_unstructured_metadata(md_json):
             val = val.decode("utf-8")
         md[key] = val
     md = _sort_dict(md)
-    md_hash = str(_hash(md, md.keys(), include_keys_in_hash=True))
-    md["hash"] = md_hash
-    md["id"] = f"MD_{md_hash[:25]}"
-    split = md["id"][-4:]
-    filename = f"{md['id']}.json"
-    after_bucket = os.path.join(split, filename)
-    metadata = json.dumps(md)
-    return {
-        "metadata": metadata,
-        "metadata_id": md["id"],
-        "metadata_path": after_bucket,
-        "metadata_size": sys.getsizeof(metadata),
-    }
+    serialized_len = len(json.dumps(md))
+    if serialized_len > METADATA_MAX_CHARS:
+        raise ValueError(
+            f"Metadata exceeds maximum allowed size of {METADATA_MAX_CHARS} "
+            f"characters ({serialized_len} chars). Reduce metadata content "
+            "before ingesting."
+        )
+    return {"metadata": md}
 
 
 def stringify_lists(row_dict):
@@ -159,7 +152,7 @@ def append_ith_element_to_rdd_labels(row_elem):
     row_elem: tuple created by joining two RDD.zipWithIndex
     new_labels: list of labels
     """
-    (index, (co_row, new_labels)) = row_elem
+    index, (co_row, new_labels) = row_elem
     val = co_row.get("labels")
     if val is None:
         val = new_labels

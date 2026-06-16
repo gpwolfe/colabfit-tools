@@ -8,7 +8,6 @@ from colabfit.tools.pg.schema import config_schema
 from colabfit.tools.pg.utilities import (
     _empty_dict_from_schema,
     _hash,
-    _parse_unstructured_metadata,
     config_struct_hash,
     get_last_modified,
 )
@@ -26,7 +25,6 @@ class AtomicConfiguration(Atoms):
 
     def __init__(
         self,
-        co_md_map=None,
         info=None,
         **kwargs,
     ):
@@ -35,10 +33,6 @@ class AtomicConfiguration(Atoms):
         and :meth:`ase.Atoms.__init__()`
 
         Args:
-            co_md_map (dict) optional:
-                Property map of metadata to be used to set configuration metadata for a
-                configuration. This should be called at creation of AtomicConfiguration
-                in order to include metadata in the hash.
             **kwargs:
                 Other keyword arguments that can be passed to
                 :meth:`ase.Atoms.__init__()`
@@ -66,7 +60,6 @@ class AtomicConfiguration(Atoms):
             "pbc",
         ]
         self.info = info
-        self.metadata = self.set_metadata(co_md_map)
         if isinstance(names, str):
             self.names = [names]
         else:
@@ -90,47 +83,6 @@ class AtomicConfiguration(Atoms):
                 "The same key should not be used in both Configuration.info and "
                 "Configuration.arrays"
             )
-
-    def set_metadata(self, co_md_map):
-        """
-        Returns metadata for a configuration from a property map.
-        This should be called at creation of AtomicConfiguration in order
-        to include metadata in the hash.
-
-        Args:
-            co_md_map (dict): Property map of metadata to be used to set configuration
-            metadata for a configuration.
-
-        """
-        if co_md_map is None:
-            co_md_map = {}
-        gathered_fields = {}
-        for md_field in co_md_map.keys():
-            if "value" in co_md_map[md_field]:
-                v = co_md_map[md_field]["value"]
-            elif "field" in co_md_map[md_field]:
-                field_key = co_md_map[md_field]["field"]
-
-                if field_key in self.info:
-                    v = self.info[field_key]
-                elif field_key in self.arrays:
-                    v = self.arrays[field_key]
-                else:
-                    # No keys are required; ignored if missing
-                    continue
-            else:
-                # No keys are required; ignored if missing
-                continue
-
-            if "units" in co_md_map[md_field]:
-                gathered_fields[md_field] = {
-                    f"{md_field}": v,
-                    f"{md_field}_unit": co_md_map[md_field]["units"],
-                }
-            else:
-                gathered_fields[md_field] = v
-
-        return _parse_unstructured_metadata(gathered_fields)
 
     def configuration_summary(self):
         """Extracts useful metadata from a Configuration
@@ -241,13 +193,11 @@ class AtomicConfiguration(Atoms):
             co_dict["pbc"],
             co_dict["positions"],
         )
-        # if self.metadata is not None:
-        #    co_dict.update(self.metadata)
         co_dict.update(self.configuration_summary())
         return co_dict
 
     @classmethod
-    def from_ase(self, atoms, co_md_map=None):
+    def from_ase(self, atoms):
         """
         Generates an :class:`AtomicConfiguration` from an :code:`ase.Atoms` object.
         """
@@ -277,7 +227,6 @@ class AtomicConfiguration(Atoms):
             constraint=constraints,
             celldisp=dct.pop("celldisp", None),
             info=info,
-            co_md_map=co_md_map,
             **kw,
         )
         natoms = len(atoms)

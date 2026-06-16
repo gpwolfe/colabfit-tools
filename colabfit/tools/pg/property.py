@@ -5,7 +5,6 @@ import tempfile
 import warnings
 from collections import namedtuple
 from copy import deepcopy
-from functools import partial
 import kim_edn
 import numpy as np
 from ase.units import create_units
@@ -17,10 +16,11 @@ from kim_property.create import KIM_PROPERTIES
 from kim_property.definition import PROPERTY_ID as VALID_KIM_ID
 
 from colabfit.tools.pg.configuration import AtomicConfiguration
-from colabfit.tools.pg.schema import property_object_md_schema
+from colabfit.tools.pg.schema import property_object_schema
 from colabfit.tools.pg.utilities import (
     _empty_dict_from_schema,
     _hash,
+    _parse_unstructured_metadata,
     get_last_modified,
 )
 
@@ -66,6 +66,10 @@ _ignored_fields = [
     "unrelaxed-periodic-cell-vector-2",
     "unrelaxed-periodic-cell-vector-3",
 ]
+
+_HASH_IGNORED_FIELDS = frozenset(
+    {"last_modified", "multiplicity", "max_force_norm", "mean_force_norm"}
+)
 
 
 def energy_to_schema(prop_name, en_prop: dict):
@@ -122,10 +126,11 @@ def band_gap_to_schema(bg_prop: dict):
 
 
 prop_to_row_mapper = {
-    "energy": partial(energy_to_schema, "energy"),
-    "adsorption-energy": partial(energy_to_schema, "adsorption-energy"),
-    "atomization-energy": partial(energy_to_schema, "atomization-energy"),
-    "formation-energy": partial(energy_to_schema, "formation-energy"),
+    # Energy-type properties are routed generically (any key containing "energy"),
+    # so energy, formation-energy, atomization-energy, adsorption-energy,
+    # energy-above-hull, and future energy fields all flow through energy_to_schema
+    # without needing an explicit entry here.
+    "energy": energy_to_schema,
     "atomic-forces": atomic_forces_to_schema,
     "cauchy-stress": cauchy_stress_to_schema,
     "band-gap": band_gap_to_schema,
@@ -252,20 +257,18 @@ class Property(dict):
             self.property_map = dict(property_map)
         else:
             self.property_map = {}
-        self.metadata = metadata
+        self.metadata = _parse_unstructured_metadata(metadata)
         self.chemical_formula_hill = instance.pop("chemical_formula_hill")
         if standardize_energy:
             self.standardize_energy()
         if dataset_id is not None:
             self.dataset_id = dataset_id
         self.row_dict = self.to_row_dict()
-        # TODO: Dynamically get unique_identifiers
-        self.unique_identifier_kw = []
-        for k, v in self.row_dict.items():
-            if k not in ["last_modified", "multiplicity"]:
-                self.unique_identifier_kw.append(k)
+        self.unique_identifier_kw = [
+            k for k in self.row_dict if k not in _HASH_IGNORED_FIELDS
+        ]
         self._hash = _hash(self.row_dict, self.unique_identifier_kw, False)
-        self.row_dict["hash"] = str(self._hash)
+        self.row_dict["hash"] = self._hash
         self._id = f"PO_{self._hash}"
         if len(self._id) > 28:
             self._id = self._id[:28]
@@ -479,8 +482,8 @@ class Property(dict):
         Convert the Property to a dictionary
         """
         # TODO: contruct empty dict from schema or just use instance instead
-        row_dict = _empty_dict_from_schema(property_object_md_schema)
-        row_dict["metadata"] = self.metadata
+        row_dict = _empty_dict_from_schema(property_object_schema)
+        row_dict.update(self.metadata)
         for key, val in self.instance.items():
             if key == "method":
                 row_dict["method"] = val
@@ -490,6 +493,8 @@ class Property(dict):
                 continue
             elif key == "configuration_id":
                 row_dict["configuration_id"] = val
+            elif "energy" in key:
+                row_dict.update(prop_to_row_mapper["energy"](key, val))
             elif key in prop_to_row_mapper:
                 row_dict.update(prop_to_row_mapper[key](val))
             else:
@@ -502,6 +507,10 @@ class Property(dict):
         row_dict["chemical_formula_hill"] = self.chemical_formula_hill
         row_dict["multiplicity"] = 1
         row_dict["dataset_id"] = self.dataset_id
+        if row_dict["atomic_forces"] is not None:
+            norms = [np.linalg.norm(f) for f in row_dict["atomic_forces"]]
+            row_dict["max_force_norm"] = float(np.max(norms))
+            row_dict["mean_force_norm"] = float(np.mean(norms))
         return row_dict
 
     def standardize_energy(self):
@@ -534,9 +543,7 @@ class Property(dict):
             if "per-atom" in prop_dict:
                 if prop_dict["per-atom"]["source-value"] is True:
                     if self.nsites is None:
-                        raise RuntimeError(
-                            "nsites must be provided to convert per-atom"
-                        )
+                        raise RuntimeError("nsites must be provided to convert per-atom")
                     prop_val *= self.nsites
 
             if units != p_info.unit:
@@ -576,12 +583,16 @@ class Property(dict):
                 "source-unit": p_info.unit,
             }
 
+    def get_identifier_keys(self):
+        """Return the sorted keys used to compute the property identity hash."""
+        return sorted(self.unique_identifier_kw)
+
     def __hash__(self):
 
         return int(
             _hash(
                 self.row_dict,
-                sorted(self.unique_identifier_kw),
+                self.get_identifier_keys(),
             ),
             16,
         )
@@ -670,6 +681,83 @@ property_info = namedtuple(
 )
 
 
+def check_split_units(units: str) -> bool:
+    """Check that every unit in a compound unit string is a known ASE unit.
+
+    Args:
+        units (str): Compound unit string (e.g. ``"eV/angstrom^3"``).
+
+    Returns:
+        bool: True if all units are valid, False otherwise.
+    """
+    split_units = list(
+        itertools.chain.from_iterable([sp.split("/") for sp in units.split("*")])
+    )
+    for sp_un in split_units:
+        un = sp_un.split("^")[0] if "^" in sp_un else sp_un
+        if un not in UNITS:
+            return False
+    return True
+
+
+class PropertyInfo:
+    """Validated holder for a single PropertyMap property entry.
+
+    Validates the property name and units up front so configuration errors are
+    caught at map-construction time rather than during ingest. Units are kept as
+    a string (the pg pipeline does not support dynamic source-unit dicts).
+
+    Attributes:
+        property_name (str): Property name; must match a property definition and
+            must use hyphens, not underscores.
+        field (str): Field in the AtomicConfiguration to read the value from.
+        units (str): A valid (compound) ASE unit string.
+        original_file_key (str): Key name in the original data file.
+        additional (list[tuple]): Any additional key/value pairs for the property.
+    """
+
+    def __init__(
+        self,
+        property_name: str,
+        field: str,
+        units: str,
+        original_file_key: str,
+        additional: list[tuple] = None,
+    ):
+        self.property_name = property_name
+        self.field = field
+        self.units = units
+        self.original_file_key = original_file_key
+        self.additional = additional if additional is not None else []
+        self.validate()
+
+    def validate(self):
+        if not self.property_name:
+            raise ValueError("Property name is required")
+        if not self.field:
+            raise ValueError("Field is required")
+        if not self.original_file_key:
+            raise ValueError("Original file key is required")
+        if "_" in self.property_name:
+            raise ValueError(
+                "Property name cannot contain underscores ('_'). "
+                "Use hyphens ('-') instead."
+            )
+        if isinstance(self.units, str) and not check_split_units(self.units):
+            raise ValueError(
+                f"Invalid unit: {self.units}. Use a valid (compound) ASE unit string."
+            )
+
+    def get_info(self):
+        return property_info(
+            property_name=self.property_name,
+            field=self.field,
+            units=self.units,
+            original_file_key=self.original_file_key,
+            additional=self.additional,
+        )
+
+
 class PropertyMap:
     """
     A class to store and check metadata and key/field mappings for Property objects.
@@ -711,9 +799,7 @@ class PropertyMap:
     """
 
     def __init__(self, property_definitions: list):
-        self.property_definitions = {
-            p["property-name"]: p for p in property_definitions
-        }
+        self.property_definitions = {p["property-name"]: p for p in property_definitions}
         self._metadata = {
             "software": {"value": None, "required": True},
             "method": {"value": None, "required": True},
@@ -738,9 +824,7 @@ class PropertyMap:
     def get_metadata(self):
         self.validate_metadata()
         return {
-            k: v
-            for k, v in self._metadata.items()
-            if (v.get("value") or v.get("field"))
+            k: v for k, v in self._metadata.items() if (v.get("value") or v.get("field"))
         }
 
     def set_property(
@@ -765,17 +849,17 @@ class PropertyMap:
             else:
                 raise KeyError(f"Key '{key}' not found in property '{property_name}'")
 
-    def set_properties(self, properties: list[dict | property_info]):
+    def set_properties(self, properties: list[dict | property_info | PropertyInfo]):
         for prop in properties:
+            if isinstance(prop, PropertyInfo):
+                prop = prop.get_info()
             if isinstance(prop, dict):
                 prop_name = prop["property_name"]
                 field = prop["field"]
                 units = prop["units"]
                 original_file_key = prop["original_file_key"]
                 additional = prop.get("additional", [])
-                self.set_property(
-                    prop_name, field, units, original_file_key, additional
-                )
+                self.set_property(prop_name, field, units, original_file_key, additional)
             elif isinstance(prop, property_info):
                 prop_name = prop.property_name
                 field = prop.field
@@ -784,9 +868,7 @@ class PropertyMap:
                 additional = prop.additional
                 if additional is None:
                     additional = []
-                self.set_property(
-                    prop_name, field, units, original_file_key, additional
-                )
+                self.set_property(prop_name, field, units, original_file_key, additional)
         self.validate_properties()
 
     def get_property(self, property_name: str):
@@ -845,9 +927,7 @@ class PropertyMap:
                     continue
                 elif val.get("has-unit") and prop_view.get("units") is None:
                     raise ValueError(f"Property '{prop_name}' must have 'units' set.")
-                elif (
-                    val.get("has-unit") is False and prop_view.get("units") is not None
-                ):
+                elif val.get("has-unit") is False and prop_view.get("units") is not None:
                     raise ValueError(
                         f"Property '{prop_name}' must have key {key}: 'units' set to None."  # noqa E501
                     )

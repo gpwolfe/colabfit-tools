@@ -7,15 +7,14 @@ from functools import partial
 from itertools import islice
 from multiprocessing import Pool
 from pathlib import Path
-from time import time
 from types import GeneratorType
 
 import boto3
 import psycopg
 from ase import Atoms
-from botocore.exceptions import ClientError
 from psycopg import sql
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 from tqdm import tqdm
 
 from colabfit import ID_FORMAT_STRING
@@ -24,11 +23,12 @@ from colabfit.tools.pg.configuration_set import ConfigurationSet
 from colabfit.tools.pg.dataset import Dataset
 from colabfit.tools.pg.property import Property
 from colabfit.tools.pg.schema import (
-    config_md_schema,
+    co_cs_map_schema,
+    config_schema,
     configuration_set_schema,
     dataset_schema,
     property_definition_schema,
-    property_object_md_schema,
+    property_object_schema,
 )
 from colabfit.tools.pg.utilities import get_last_modified
 
@@ -162,11 +162,11 @@ class DataManager:
 
     @staticmethod
     def get_co_sql():
-        columns = [x.name for x in config_md_schema.columns]
+        columns = [x.name for x in config_schema.columns]
         sql_compose = sql.SQL(" ").join(
             [
                 sql.SQL("INSERT INTO"),
-                sql.Identifier(config_md_schema.name),
+                sql.Identifier(config_schema.name),
                 sql.SQL("("),
                 sql.SQL(",").join(map(sql.Identifier, columns)),
                 sql.SQL(") VALUES ("),
@@ -191,11 +191,11 @@ class DataManager:
 
     @staticmethod
     def get_po_sql():
-        columns = [x.name for x in property_object_md_schema.columns]
+        columns = [x.name for x in property_object_schema.columns]
         sql_compose = sql.SQL(" ").join(
             [
                 sql.SQL("INSERT INTO"),
-                sql.Identifier(property_object_md_schema.name),
+                sql.Identifier(property_object_schema.name),
                 sql.SQL("("),
                 sql.SQL(",").join(map(sql.Identifier, columns)),
                 sql.SQL(") VALUES ("),
@@ -203,7 +203,7 @@ class DataManager:
                 sql.SQL(")"),
                 sql.SQL(
                     "ON CONFLICT (hash) DO UPDATE SET multiplicity = {}.multiplicity + 1;"
-                ).format(sql.Identifier(property_object_md_schema.name)),
+                ).format(sql.Identifier(property_object_schema.name)),
             ]
         )
         return sql_compose
@@ -212,14 +212,20 @@ class DataManager:
     def co_row_to_values(row_dict):
         name = row_dict["names"][0]
         dataset_id = row_dict["dataset_ids"][0]
-        vals = [row_dict.get(k) for k in config_md_schema.column_names]
+        vals = [row_dict.get(k) for k in config_schema.column_names]
         vals.append(dataset_id)
         vals.append(name)
         return vals
 
     @staticmethod
     def po_row_to_values(row_dict):
-        vals = [row_dict.get(k) for k in property_object_md_schema.column_names]
+        vals = []
+        for k in property_object_schema.column_names:
+            v = row_dict.get(k)
+            # metadata is a JSONB column; a bare dict is not adaptable by psycopg
+            if k == "metadata" and v is not None:
+                v = Jsonb(v)
+            vals.append(v)
         return vals
 
     @staticmethod
@@ -304,10 +310,10 @@ class DataManager:
 
     # currently cf-kit table with some properties removed
     def create_po_table(self):
-        self.create_table(property_object_md_schema)
+        self.create_table(property_object_schema)
 
     def create_co_table(self):
-        self.create_table(config_md_schema)
+        self.create_table(config_schema)
 
     def create_pd_table(self):
         self.create_table(property_definition_schema)
@@ -649,87 +655,118 @@ class DataManager:
         print(dataset_id)
         return self.general_query(sql)
 
-    def create_configuration_sets(
-        self,
-        loader,
-        name_label_match: list[tuple],
-    ):
+    @staticmethod
+    def get_cs_sql():
+        """Build the configuration_sets INSERT from configuration_set_schema."""
+        columns = configuration_set_schema.column_names
+        return sql.SQL(" ").join(
+            [
+                sql.SQL("INSERT INTO"),
+                sql.Identifier(configuration_set_schema.name),
+                sql.SQL("("),
+                sql.SQL(",").join(map(sql.Identifier, columns)),
+                sql.SQL(") VALUES ("),
+                sql.SQL(",").join(sql.Placeholder() * len(columns)),
+                sql.SQL(") ON CONFLICT (hash) DO NOTHING;"),
+            ]
+        )
+
+    @staticmethod
+    def cs_row_to_values(row_dict):
+        return [row_dict.get(k) for k in configuration_set_schema.column_names]
+
+    def create_cs_table(self):
+        self.create_table(configuration_set_schema)
+
+    def create_co_cs_map_table(self):
+        self.create_table(co_cs_map_schema)
+
+    def config_set_query(self, dataset_id, name_match=None, label_match=None):
+        """Return configuration rows for a dataset matching name/label patterns.
+
+        ``name_match``/``label_match`` are SQL LIKE patterns applied to the
+        configuration ``names``/``labels`` array columns; either may be None to
+        skip that filter. Values are passed as query parameters.
         """
-        Args for name_label_match in order:
-        1. String pattern for matching CONFIGURATION NAMES
-        2. String pattern for matching CONFIGURATION LABELS
-        3. Name for configuration set
-        4. Description for configuration set
+        clauses = [sql.SQL("%s = ANY(dataset_ids)")]
+        params = [dataset_id]
+        if name_match:
+            clauses.append(
+                sql.SQL("EXISTS (SELECT 1 FROM unnest(names) AS n WHERE n LIKE %s)")
+            )
+            params.append(name_match)
+        if label_match:
+            clauses.append(
+                sql.SQL("EXISTS (SELECT 1 FROM unnest(labels) AS lb WHERE lb LIKE %s)")
+            )
+            params.append(label_match)
+        query = sql.SQL(" ").join(
+            [
+                sql.SQL("SELECT * FROM"),
+                sql.Identifier(config_schema.name),
+                sql.SQL("WHERE"),
+                sql.SQL(" AND ").join(clauses),
+                sql.SQL(";"),
+            ]
+        )
+        with psycopg.connect(
+            dbname=self.dbname,
+            user=self.user,
+            port=self.port,
+            host=self.host,
+            password=self.password,
+            row_factory=dict_row,
+        ) as conn:
+            with conn.cursor() as curs:
+                curs.execute(query, params)
+                return curs.fetchall()
+
+    def create_configuration_sets(self, dataset_id, name_label_match):
+        """Create configuration sets for a dataset.
+
+        Args for each tuple in ``name_label_match`` (in order):
+            1. SQL LIKE pattern matching configuration NAMES (or None)
+            2. SQL LIKE pattern matching configuration LABELS (or None)
+            3. Name for the configuration set
+            4. Description for the configuration set
+
+        Membership is recorded in the configuration-set <-> configuration map
+        table; configuration rows are never modified.
         """
-        dataset_id = self.dataset_id
+        self.create_cs_table()
+        self.create_co_cs_map_table()
+        cs_sql = self.get_cs_sql()
+        map_sql = sql.SQL(
+            "INSERT INTO {} (configuration_set_id, configuration_id) VALUES (%s, %s);"
+        ).format(sql.Identifier(co_cs_map_schema.name))
         config_set_rows = []
-        for i, (names_match, label_match, cs_name, cs_desc) in tqdm(
-            enumerate(name_label_match), desc="Creating Configuration Sets"
+        for names_match, label_match, cs_name, cs_desc in tqdm(
+            name_label_match, desc="Creating Configuration Sets"
         ):
-            print(
-                f"names match: {names_match}, label: {label_match}, "
-                f"cs_name: {cs_name}, cs_desc: {cs_desc}"
-            )
-            config_set_query_df = loader.config_set_query(
-                query_table=loader.config_table,
-                dataset_id=dataset_id,
-                name_match=names_match,
-                label_match=label_match,
-            )
-            co_id_df = (
-                config_set_query_df.select("id")
-                .distinct()
-                .withColumnRenamed("id", "configuration_id")
-            )
-            string_cols = [
-                "elements",
-            ]
-            unstring_col_udf = sf.udf(unstring_df_val, ArrayType(StringType()))
-            for col in string_cols:
-                config_set_query_df = config_set_query_df.withColumn(
-                    col, unstring_col_udf(sf.col(col))
-                )
-            unstring_col_udf = sf.udf(unstring_df_val, ArrayType(IntegerType()))
-            int_cols = [
-                "atomic_numbers",
-                "dimension_types",
-            ]
-            for col in int_cols:
-                config_set_query_df = config_set_query_df.withColumn(
-                    col, unstring_col_udf(sf.col(col))
-                )
-            t = time()
-            prelim_cs_id = f"CS_{cs_name}_{self.dataset_id}"
-            co_cs_df = loader.get_co_cs_mapping(prelim_cs_id)
-            if co_cs_df is not None:
-                print(
-                    f"Configuration Set {cs_name} already exists.\nRemove rows matching "  # noqa E501
-                    f"'configuration_set_id == {prelim_cs_id} from table {loader.co_cs_map_table} to recreate.\n"  # noqa E501
-                )
+            configs = self.config_set_query(dataset_id, names_match, label_match)
+            if not configs:
+                print(f"No configurations matched for set '{cs_name}'; skipping.")
                 continue
             config_set = ConfigurationSet(
+                config_df=configs,
                 name=cs_name,
                 description=cs_desc,
-                config_df=config_set_query_df,
-                dataset_id=self.dataset_id,
+                dataset_id=dataset_id,
             )
-            co_cs_df = co_id_df.withColumn(
-                "configuration_set_id", sf.lit(config_set.id)
-            )
-            loader.write_table(co_cs_df, loader.co_cs_map_table, check_unique=False)
-            loader.update_existing_co_rows(
-                co_df=config_set_query_df,
-                cols=["configuration_set_ids"],
-                elems=config_set.id,
-            )
-            t_end = time() - t
-            print(f"Time to create CS and update COs with CS-ID: {t_end}")
-
+            map_values = [
+                (config_set.id, c["id"]) for c in configs if c.get("id") is not None
+            ]
+            with psycopg.connect(
+                dbname=self.dbname,
+                user=self.user,
+                port=self.port,
+                host=self.host,
+                password=self.password,
+            ) as conn:
+                with conn.cursor() as curs:
+                    curs.execute(cs_sql, self.cs_row_to_values(config_set.row_dict))
+                    curs.executemany(map_sql, map_values)
             config_set_rows.append(config_set.row_dict)
-        config_set_df = loader.spark.createDataFrame(
-            config_set_rows, schema=configuration_set_schema
-        )
-        loader.write_table(config_set_df, loader.config_set_table)
         return config_set_rows
 
     def delete_dataset(self, dataset_id):
@@ -748,6 +785,49 @@ class DataManager:
         ) as conn:
             with conn.cursor() as curs:
                 curs.execute(sql, (dataset_id,))
+
+    def find_duplicate_ids(self, table_name="property_objects"):
+        """Audit a table for duplicate ``id`` values.
+
+        The ``hash`` column is a PRIMARY KEY (true duplicates are impossible), but
+        ``id`` is a 25-char prefix of the hash, so two distinct hashes can collide
+        on ``id``. This returns ``[{id, count}, ...]`` for any colliding ids.
+        Supported tables: ``property_objects`` and ``configurations``.
+        """
+        allowed = {"property_objects", "configurations"}
+        if table_name not in allowed:
+            raise ValueError(f"table_name must be one of {sorted(allowed)}")
+        query = sql.SQL(
+            "SELECT id, COUNT(*) AS count FROM {} " "GROUP BY id HAVING COUNT(*) > 1;"
+        ).format(sql.Identifier(table_name))
+        with psycopg.connect(
+            dbname=self.dbname,
+            user=self.user,
+            port=self.port,
+            host=self.host,
+            password=self.password,
+            row_factory=dict_row,
+        ) as conn:
+            with conn.cursor() as curs:
+                curs.execute(query)
+                return curs.fetchall()
+
+    def zero_multiplicity(self, dataset_id):
+        """Reset ``multiplicity`` to 0 for all property objects of a dataset.
+
+        Useful before re-ingesting a dataset so multiplicities recount from zero
+        (ingest increments via ``ON CONFLICT (hash) DO UPDATE``).
+        """
+        query = "UPDATE property_objects SET multiplicity = 0 WHERE dataset_id = %s;"
+        with psycopg.connect(
+            dbname=self.dbname,
+            user=self.user,
+            port=self.port,
+            host=self.host,
+            password=self.password,
+        ) as conn:
+            with conn.cursor() as curs:
+                curs.execute(query, (dataset_id,))
 
 
 class S3BatchManager:
@@ -874,29 +954,6 @@ def prepend_path_udf(prefix, md_path):
 #                 str(md_path),
 #             )
 #     return iter([])
-
-
-def read_md_partition(partition, config):
-    s3_mgr = S3FileManager(
-        bucket_name=config["bucket_dir"],
-        access_id=config["access_key"],
-        secret_key=config["access_secret"],
-        endpoint_url=config["endpoint"],
-    )
-
-    def process_row(row):
-        rowdict = row.asDict()
-        try:
-            rowdict["metadata"] = s3_mgr.read_file(row["metadata_path"])
-        except ClientError as e:
-            if e.response["Error"]["Code"] == "404":
-                rowdict["metadata"] = None
-            else:
-                print(f"Error reading {row['metadata_path']}: {str(e)}")
-                rowdict["metadata"] = None
-        return Row(**rowdict)
-
-    return map(process_row, partition)
 
 
 '''
