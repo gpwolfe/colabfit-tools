@@ -1,3 +1,4 @@
+import ast
 import hashlib
 import itertools
 import json
@@ -6,10 +7,8 @@ import string
 from functools import partial
 from itertools import islice
 from multiprocessing import Pool
-from pathlib import Path
 from types import GeneratorType
 
-import boto3
 import psycopg
 from ase import Atoms
 from psycopg import sql
@@ -31,10 +30,6 @@ from colabfit.tools.pg.schema import (
     property_object_schema,
 )
 from colabfit.tools.pg.utilities import get_last_modified
-
-VAST_BUCKET_DIR = "colabfit-data"
-VAST_METADATA_DIR = "data/MD"
-NSITES_COL_SPLITS = 20
 
 
 def generate_string():
@@ -173,15 +168,9 @@ class DataManager:
                 sql.SQL(",").join(sql.Placeholder() * len(columns)),
                 sql.SQL(")"),
                 sql.SQL("ON CONFLICT (hash) DO UPDATE SET"),
-                sql.Identifier("dataset_ids"),
-                sql.SQL("= array_append("),
-                sql.Identifier("configurations.dataset_ids"),
-                sql.SQL(","),
-                sql.Placeholder(),
-                sql.SQL(") ,"),
                 sql.Identifier("names"),
                 sql.SQL("= array_append("),
-                sql.Identifier("configurations.names"),
+                sql.Identifier("configurations", "names"),
                 sql.SQL(","),
                 sql.Placeholder(),
                 sql.SQL(");"),
@@ -211,9 +200,7 @@ class DataManager:
     @staticmethod
     def co_row_to_values(row_dict):
         name = row_dict["names"][0]
-        dataset_id = row_dict["dataset_ids"][0]
         vals = [row_dict.get(k) for k in config_schema.column_names]
-        vals.append(dataset_id)
         vals.append(name)
         return vals
 
@@ -392,6 +379,8 @@ class DataManager:
         doi: str = None,
         labels: list[str] = None,
         data_license: str = "CC-BY-4.0",
+        date_requested: str = None,
+        equilibrium: bool = False,
         prop_map=None,
     ):
 
@@ -422,6 +411,8 @@ class DataManager:
             doi,
             labels,
             data_license,
+            date_requested,
+            equilibrium,
         )
         return dataset_id
 
@@ -463,6 +454,8 @@ class DataManager:
         doi: str = None,
         labels: list[str] = None,
         data_license: str = "CC-BY-4.0",
+        date_requested: str = None,
+        equilibrium: bool = False,
     ):
         # find cs_ids, co_ids, and pi_ids
         config_df = self.dataset_query(dataset_id, "configurations")
@@ -485,6 +478,8 @@ class DataManager:
             data_license=data_license,
             configuration_set_ids=None,
             publication_year=publication_year,
+            date_requested=date_requested,
+            equilibrium=equilibrium,
         )
         row = ds.row_dict
 
@@ -544,10 +539,11 @@ class DataManager:
 
         old_ds = self.get_dataset(dataset_id)[0]
 
-        # format links
-        s = old_ds["links"][0].split(" ")[-1].replace("'", "")
-        d = old_ds["links"][1].split(" ")[-1].replace("'", "")
-        o = old_ds["links"][2].split(" ")[-1].replace("'", "")
+        # links is stored as str(dict); parse it back to recover the components
+        links = ast.literal_eval(old_ds["links"]) if old_ds["links"] else {}
+        s = links.get("source-publication")
+        d = links.get("source-data")
+        o = links.get("other")
 
         ds = Dataset(
             name=old_ds["name"],
@@ -565,6 +561,8 @@ class DataManager:
             # TODO handle cs later
             configuration_set_ids=None,
             publication_year=old_ds["publication_year"],
+            date_requested=old_ds["date_requested"],
+            equilibrium=old_ds["equilibrium"],
         )
         row = ds.row_dict
 
@@ -587,7 +585,7 @@ class DataManager:
             c.*,
             po.*
         FROM
-            (SELECT * FROM configurations WHERE '{dataset_id}' = ANY(dataset_ids)) c
+            configurations c
         INNER JOIN
             (SELECT * FROM property_objects WHERE dataset_id = '{dataset_id}') po
         ON
@@ -630,8 +628,12 @@ class DataManager:
         if table_name == "configurations":
             sql = f"""
                 SELECT *
-                FROM {table_name}
-                WHERE '{dataset_id}' = ANY(dataset_ids);
+                FROM configurations
+                WHERE id IN (
+                    SELECT DISTINCT configuration_id
+                    FROM property_objects
+                    WHERE dataset_id = '{dataset_id}'
+                );
             """
         elif table_name == "property_objects":
             sql = f"""
@@ -688,7 +690,12 @@ class DataManager:
         configuration ``names``/``labels`` array columns; either may be None to
         skip that filter. Values are passed as query parameters.
         """
-        clauses = [sql.SQL("%s = ANY(dataset_ids)")]
+        clauses = [
+            sql.SQL(
+                "id IN (SELECT DISTINCT configuration_id FROM property_objects "
+                "WHERE dataset_id = %s)"
+            )
+        ]
         params = [dataset_id]
         if name_match:
             clauses.append(
@@ -830,166 +837,8 @@ class DataManager:
                 curs.execute(query, (dataset_id,))
 
 
-class S3BatchManager:
-    def __init__(self, bucket_name, access_id, secret_key, endpoint_url=None):
-        self.bucket_name = bucket_name
-        self.access_id = access_id
-        self.secret_key = secret_key
-        self.endpoint_url = endpoint_url
-        self.client = self.get_client()
-        self.MAX_BATCH_SIZE = 100
-
-    def get_client(self):
-        return boto3.client(
-            "s3",
-            use_ssl=False,
-            endpoint_url=self.endpoint_url,
-            aws_access_key_id=self.access_id,
-            aws_secret_access_key=self.secret_key,
-            region_name="fake-region",
-            config=boto3.session.Config(
-                signature_version="s3v4", s3={"addressing_style": "path"}
-            ),
-        )
-
-    def batch_write(self, file_batch):
-        results = []
-        for key, content in file_batch:
-            try:
-                self.client.put_object(Bucket=self.bucket_name, Key=key, Body=content)
-                results.append((key, None))
-            except Exception as e:
-                results.append((key, str(e)))
-        return results
-
-
-def write_md_partition(partition, config):
-    s3_mgr = S3BatchManager(
-        bucket_name=config["bucket_dir"],
-        access_id=config["access_key"],
-        secret_key=config["access_secret"],
-        endpoint_url=config["endpoint"],
-    )
-    file_batch = []
-    for row in partition:
-        md_path = Path(config["metadata_dir"]) / row["metadata_path"]
-        file_batch.append((str(md_path), row["metadata"]))
-
-        if len(file_batch) >= s3_mgr.MAX_BATCH_SIZE:
-            _ = s3_mgr.batch_write(file_batch)
-            file_batch = []
-    if file_batch:
-        _ = s3_mgr.batch_write(file_batch)
-    return iter([])
-
-
-class S3FileManager:
-    def __init__(self, bucket_name, access_id, secret_key, endpoint_url=None):
-        self.bucket_name = bucket_name
-        self.access_id = access_id
-        self.secret_key = secret_key
-        self.endpoint_url = endpoint_url
-
-    def get_client(self):
-        return boto3.client(
-            "s3",
-            use_ssl=False,
-            endpoint_url=self.endpoint_url,
-            aws_access_key_id=self.access_id,
-            aws_secret_access_key=self.secret_key,
-            region_name="fake-region",
-            config=boto3.session.Config(
-                signature_version="s3v4", s3={"addressing_style": "path"}
-            ),
-        )
-
-    def write_file(self, content, file_key):
-        try:
-            client = self.get_client()
-            client.put_object(Bucket=self.bucket_name, Key=file_key, Body=content)
-            # return (f"/vdev/{self.bucket_name}/{file_key}", sys.getsizeof(content))
-        except Exception as e:
-            return f"Error: {str(e)}"
-
-    def read_file(self, file_key):
-        try:
-            client = self.get_client()
-            # key = file_key.replace(str(Path("/vdev/colabfit-data")) + "/", "")
-            response = client.get_object(Bucket=self.bucket_name, Key=file_key)
-            return response["Body"].read().decode("utf-8")
-        except Exception as e:
-            return f"Error: {str(e)}"
-
-
 def generate_ds_id():
     # Maybe check to see whether the DS ID already exists?
     ds_id = ID_FORMAT_STRING.format("DS", generate_string(), 0)
     # print("Generated new DS ID:", ds_id)
     return ds_id
-
-
-"""
-@sf.udf(returnType=StringType())
-def prepend_path_udf(prefix, md_path):
-    try:
-        full_path = Path(prefix) / Path(md_path).relative_to("/")
-        return str(full_path)
-    except ValueError:
-        full_path = Path(prefix) / md_path
-        return str(full_path)
-"""
-
-# def write_md_partition(partition, config):
-#     s3_mgr = S3FileManager(
-#         bucket_name=config["bucket_dir"],
-#         access_id=config["access_key"],
-#         secret_key=config["access_secret"],
-#         endpoint_url=config["endpoint"],
-#     )
-#     for row in partition:
-#         md_path = Path(config["metadata_dir"]) / row["metadata_path"]
-#         if not md_path.exists():
-#             s3_mgr.write_file(
-#                 row["metadata"],
-#                 str(md_path),
-#             )
-#     return iter([])
-
-
-'''
-def dataset_query(
-    dataset_id=None,
-    table_name=None,
-):
-    if table_name == 'configurations':
-        sql = f"""
-            SELECT *
-            FROM {table_name}
-            WHERE '{dataset_id}' = ANY(dataset_ids);
-        """
-    elif table_name == 'property_objects':
-        sql = f"""
-            SELECT *
-            FROM {table_name}
-            WHERE dataset_id = '{dataset_id}';
-        """
-    else:
-        raise Exception('Only configurations and property_objects tables are supported')
-
-    with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password,row_factory=dict_row) as conn:
-        with conn.cursor() as curs:
-            r = curs.execute(sql)
-            return curs.fetchall()
-
-def get_dataset(dataset_id):
-    sql = f"""
-            SELECT *
-            FROM datasets
-            WHERE id = '{dataset_id}';
-        """
-
-    with psycopg.connect(dbname=self.dbname, user=self.user, port=self.port, host=self.host, password=self.password,row_factory=dict_row) as conn:
-        with conn.cursor() as curs:
-            r = curs.execute(sql)
-            return curs.fetchall()
-'''

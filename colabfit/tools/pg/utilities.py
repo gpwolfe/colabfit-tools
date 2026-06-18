@@ -79,7 +79,14 @@ def config_struct_hash(atomic_numbers, cell, pbc, positions):
 
 
 def get_last_modified():
-    return datetime.datetime.now(tz=datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.datetime.now(tz=datetime.timezone.utc).replace(
+        microsecond=0, tzinfo=None
+    )
+
+
+def get_date():
+    now = datetime.datetime.now(tz=datetime.timezone.utc)
+    return datetime.datetime(now.year, now.month, now.day)
 
 
 def _empty_dict_from_schema(schema):

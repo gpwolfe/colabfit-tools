@@ -1,4 +1,6 @@
+import datetime
 import warnings
+
 from unidecode import unidecode
 
 from colabfit import MAX_STRING_LENGTH
@@ -7,6 +9,7 @@ from colabfit.tools.pg.utilities import (
     ELEMENT_MAP,
     _empty_dict_from_schema,
     _hash,
+    get_date,
     get_last_modified,
 )
 
@@ -88,9 +91,23 @@ class Dataset:
         configuration_set_ids: list[str] = [],
         data_license: str = "CC-BY-ND-4.0",
         publication_year: str = None,
+        date_requested: str = None,
+        equilibrium: bool = False,
     ):
         if not isinstance(authors, list):
             raise TypeError("authors must be a list of strings")
+        if not date_requested:
+            raise RuntimeError("Missing required field date_requested")
+        if isinstance(date_requested, str):
+            date_requested = datetime.datetime.strptime(date_requested, "%Y-%m-%d")
+        elif isinstance(date_requested, datetime.datetime):
+            pass
+        elif isinstance(date_requested, datetime.date):
+            date_requested = datetime.datetime(
+                date_requested.year, date_requested.month, date_requested.day
+            )
+        else:
+            raise ValueError("date_requested must be a 'YYYY-MM-DD' string or datetime")
         if publication_year is not None and not (
             isinstance(publication_year, str)
             and publication_year.isdigit()
@@ -114,6 +131,8 @@ class Dataset:
         self.dataset_id = dataset_id
         self.doi = doi
         self.publication_year = publication_year
+        self.date_requested = date_requested
+        self.equilibrium = equilibrium
         self.configuration_set_ids = configuration_set_ids
         if self.configuration_set_ids is None:
             self.configuration_set_ids = []
@@ -143,7 +162,8 @@ class Dataset:
         row_dict["nproperty_objects"] = len(props)
         nsites = 0
         nperiodic_dimensions = set()
-        dimension_types = set()
+        seen_dim_type_keys = set()
+        unique_dim_types = []
         element_dict = {}
 
         for c in configs:
@@ -152,7 +172,12 @@ class Dataset:
                 el = ELEMENT_MAP[e]
                 element_dict[el] = element_dict.get(el, 0) + 1
             nperiodic_dimensions.add(c["nperiodic_dimensions"])
-            dimension_types.add(str(c["dimension_types"]))
+            dt = c["dimension_types"]
+            if dt is not None:
+                key = tuple(dt)
+                if key not in seen_dim_type_keys:
+                    seen_dim_type_keys.add(key)
+                    unique_dim_types.append(list(dt))
 
         sorted_elements = sorted(element_dict.keys())
 
@@ -162,8 +187,8 @@ class Dataset:
         row_dict["total_elements_ratios"] = (
             [element_dict[e] / nsites for e in sorted_elements] if nsites else []
         )
-        row_dict["nperiodic_dimensions"] = list(nperiodic_dimensions)
-        row_dict["dimension_types"] = list(dimension_types)
+        row_dict["nperiodic_dimensions"] = sorted(nperiodic_dimensions)
+        row_dict["dimension_types"] = unique_dim_types
 
         # Per-property counts, keyed by the property-object column names.
         count_keys = [
@@ -216,6 +241,9 @@ class Dataset:
         row_dict["name"] = self.name
         row_dict["publication_year"] = self.publication_year
         row_dict["doi"] = self.doi
+        row_dict["date_added_to_colabfit"] = get_date()
+        row_dict["date_requested"] = self.date_requested
+        row_dict["equilibrium"] = self.equilibrium
 
         return row_dict
 

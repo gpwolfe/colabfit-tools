@@ -69,7 +69,8 @@ class ConfigurationSet:
         nsites = 0
         element_counts = {}
         nperiodic_dimensions = set()
-        dimension_types = set()
+        seen_dim_type_keys = set()
+        unique_dim_types = []
         for c in config_df:
             cid = c.get("id")
             if cid is not None and cid in seen_ids:
@@ -80,7 +81,12 @@ class ConfigurationSet:
                 el = ELEMENT_MAP[e]
                 element_counts[el] = element_counts.get(el, 0) + 1
             nperiodic_dimensions.add(c["nperiodic_dimensions"])
-            dimension_types.add(str(c["dimension_types"]))
+            dt = c["dimension_types"]
+            if dt is not None:
+                key = tuple(dt)
+                if key not in seen_dim_type_keys:
+                    seen_dim_type_keys.add(key)
+                    unique_dim_types.append(list(dt))
 
         sorted_elements = sorted(element_counts.keys())
         row_dict["nconfigurations"] = len(seen_ids)
@@ -90,8 +96,8 @@ class ConfigurationSet:
         row_dict["total_elements_ratios"] = (
             [element_counts[e] / nsites for e in sorted_elements] if nsites else []
         )
-        row_dict["nperiodic_dimensions"] = list(nperiodic_dimensions)
-        row_dict["dimension_types"] = list(dimension_types)
+        row_dict["nperiodic_dimensions"] = sorted(nperiodic_dimensions)
+        row_dict["dimension_types"] = unique_dim_types
         return row_dict
 
     def __hash__(self):

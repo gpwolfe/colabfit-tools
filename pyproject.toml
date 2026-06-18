@@ -48,3 +48,10 @@ vast = [
     "pyarrow",
     "ibis-framework",
 ]
+pg = [
+    "psycopg[binary]",
+    "pyarrow",
+]
+
+[tool.setuptools.packages.find]
+include = ["colabfit*"]

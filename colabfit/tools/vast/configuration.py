@@ -84,8 +84,6 @@ class AtomicConfiguration(DataObject, Atoms):
         if len(self.id) > 28:
             self.id = self.id[:28]
         self.row_dict["id"] = self.id
-        # self.row_dict["dataset_ids"] = [self.dataset_id]
-        self.row_dict = self.row_dict
         # Check for name conflicts in info/arrays; would cause bug in parsing
         if set(self.info.keys()).intersection(set(self.arrays.keys())):
             raise RuntimeError(
@@ -184,7 +182,6 @@ class AtomicConfiguration(DataObject, Atoms):
 
     def set_dataset_id(self, dataset_id):
         self.dataset_id = dataset_id
-        self.row_dict["dataset_ids"] = [dataset_id]
 
     def to_row_dict(self):
         co_dict = _empty_dict_from_schema(config_schema)

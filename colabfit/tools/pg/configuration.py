@@ -174,7 +174,6 @@ class AtomicConfiguration(Atoms):
 
     def set_dataset_id(self, dataset_id):
         self.dataset_id = dataset_id
-        self.row_dict["dataset_ids"] = [dataset_id]
 
     def to_row_dict(self):
         co_dict = _empty_dict_from_schema(config_schema)

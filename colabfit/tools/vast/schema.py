@@ -53,7 +53,6 @@ config_schema = pa.schema(
         pa.field("id", pa.string()),
         pa.field("hash", pa.string()),
         pa.field("last_modified", pa.timestamp("us")),
-        pa.field("dataset_ids", pa.list_(pa.string())),
         pa.field("chemical_formula_hill", pa.string()),
         pa.field("chemical_formula_reduced", pa.string()),
         pa.field("chemical_formula_anonymous", pa.string()),
