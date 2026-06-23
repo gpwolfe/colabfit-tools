@@ -2,7 +2,7 @@ import unittest
 import numpy as np
 from ase import Atoms
 
-from colabfit import ATOMS_CONSTRAINTS_FIELD, ATOMS_NAME_FIELD, ATOMS_LABELS_FIELD
+from colabfit import ATOMS_NAME_FIELD, ATOMS_LABELS_FIELD
 from colabfit.tools.configuration import Configuration
 
 

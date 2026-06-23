@@ -627,7 +627,7 @@ class HDF5Backend(h5py.File):
 
                 g = self[f'properties/types/data/{prop_id}'] = pname
 
-                g = self[f'properties/configuration_ids']
+                g = self['properties/configuration_ids']
                 g['data'].create_dataset(
                     name=prop_id,
                     shape=1,
@@ -641,7 +641,7 @@ class HDF5Backend(h5py.File):
                 if pname in property_settings:
                     settings_id = property_settings[pname]
 
-                    g = self[f'properties/settings_ids']
+                    g = self['properties/settings_ids']
                     g['data'].create_dataset(
                         name=prop_id,
                         shape=1,
@@ -865,7 +865,7 @@ class HDF5Backend(h5py.File):
 
                 g = self[f'properties/types/data/{prop_id}'] = pname
 
-                g = self[f'properties/configuration_ids']
+                g = self['properties/configuration_ids']
                 g['data'].create_dataset(
                     name=prop_id,
                     shape=1,
@@ -879,7 +879,7 @@ class HDF5Backend(h5py.File):
                 if pname in property_settings:
                     settings_id = property_settings[pname]
 
-                    g = self[f'properties/settings_ids']
+                    g = self['properties/settings_ids']
                     g['data'].create_dataset(
                         name=prop_id,
                         shape=1,
@@ -976,7 +976,7 @@ class HDF5Backend(h5py.File):
                     group[f'slices/{key}'] = np.arange(start, stop)
 
                 start += ds.shape[0]
-            except Exception as e:
+            except Exception:
                 problem_adding = True
                 break
 
