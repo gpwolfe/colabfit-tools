@@ -29,7 +29,7 @@ from colabfit.tools.pg.schema import (
     property_definition_schema,
     property_object_schema,
 )
-from colabfit.tools.pg.utilities import get_last_modified
+from colabfit.tools.pg.utils import get_last_modified
 
 
 def generate_string():

@@ -5,7 +5,7 @@ from unidecode import unidecode
 
 from colabfit import MAX_STRING_LENGTH
 from colabfit.tools.pg.schema import dataset_schema
-from colabfit.tools.pg.utilities import (
+from colabfit.tools.pg.utils import (
     ELEMENT_MAP,
     _empty_dict_from_schema,
     _hash,

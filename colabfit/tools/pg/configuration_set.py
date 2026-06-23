@@ -1,7 +1,7 @@
 from hashlib import sha512
 
 from colabfit.tools.pg.schema import configuration_set_schema
-from colabfit.tools.pg.utilities import (
+from colabfit.tools.pg.utils import (
     ELEMENT_MAP,
     _empty_dict_from_schema,
     get_last_modified,

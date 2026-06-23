@@ -5,7 +5,7 @@ from ase import Atoms
 
 from colabfit import ATOMS_LABELS_FIELD, ATOMS_NAME_FIELD
 from colabfit.tools.pg.schema import config_schema
-from colabfit.tools.pg.utilities import (
+from colabfit.tools.pg.utils import (
     _empty_dict_from_schema,
     _hash,
     config_struct_hash,

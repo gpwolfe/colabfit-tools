@@ -1,6 +1,6 @@
 """Tests for hash functions in colabfit.tools.pg.utilities."""
 
-from colabfit.tools.pg.utilities import _hash, config_struct_hash
+from colabfit.tools.pg.utils import _hash, config_struct_hash
 
 
 def test_hash_returns_hex_string():
