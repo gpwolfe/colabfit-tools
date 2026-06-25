@@ -1,4 +1,3 @@
-import ast
 import hashlib
 import itertools
 import json
@@ -76,12 +75,21 @@ class DataManager:
         self.dbname = dbname
         self.user = user
         self.port = port
-        self.user = user
         self.password = password
         self.host = host
         self.read_write_batch_size = read_write_batch_size
         self.nprocs = nprocs
         self.standardize_energy = standardize_energy
+
+    def _connect(self, **kwargs):
+        return psycopg.connect(
+            dbname=self.dbname,
+            user=self.user,
+            port=self.port,
+            host=self.host,
+            password=self.password,
+            **kwargs,
+        )
 
     @staticmethod
     def _gather_co_po_rows(
@@ -91,7 +99,7 @@ class DataManager:
         dataset_id,
         standardize_energy: bool = True,
     ):
-        """Convert COs and DOs to Spark rows."""
+        """Convert COs and POs to row dicts."""
         co_po_rows = []
         for config in configs:
             config.set_dataset_id(dataset_id)
@@ -119,7 +127,7 @@ class DataManager:
     ):
         """
         Wrapper for _gather_co_po_rows.
-        Convert COs and DOs to Spark rows using multiprocessing Pool.
+        Convert COs and POs to row dicts using multiprocessing Pool.
         Returns a batch of tuples of (configuration_row, property_row).
         """
 
@@ -235,7 +243,13 @@ class DataManager:
 
     @staticmethod
     def ds_row_to_values(row_dict):
-        return [row_dict.get(k) for k in dataset_schema.column_names]
+        vals = []
+        for k in dataset_schema.column_names:
+            v = row_dict.get(k)
+            if k == "links" and v is not None:
+                v = Jsonb(v)
+            vals.append(v)
+        return vals
 
     def load_data_in_batches(
         self,
@@ -248,35 +262,27 @@ class DataManager:
         co_po_rows = self.gather_co_po_in_batches(configs, dataset_id, prop_map)
         co_sql = self.get_co_sql()
         po_sql = self.get_po_sql()
-        for co_po_batch in tqdm(
-            co_po_rows,
-            desc="Loading data to database: ",
-            unit="batch",
-        ):
-            co_rows, po_rows = list(zip(*co_po_batch))
-
-            if len(co_rows) == 0:
-                continue
-            # TODO: Need to modify dataset.to_row_dict to properly aggregate values and get data to get two copies
-            # TODO: Ensure all columns are present here
-            # TODO: get column names from query and ensure len matches values
-            # columns = list(zip(*self.get_table_schema("property_objects")))[0]
-            co_values = map(self.co_row_to_values, co_rows)
-            po_values = map(self.po_row_to_values, po_rows)
-            with psycopg.connect(
-                dbname=self.dbname,
-                user=self.user,
-                port=self.port,
-                host=self.host,
-                password=self.password,
-            ) as conn:
-                with conn.cursor() as curs:
+        with self._connect() as conn:
+            with conn.cursor() as curs:
+                for co_po_batch in tqdm(
+                    co_po_rows,
+                    desc="Loading data to database: ",
+                    unit="batch",
+                ):
+                    co_rows, po_rows = list(zip(*co_po_batch))
+                    if len(co_rows) == 0:
+                        continue
+                    co_values = map(self.co_row_to_values, co_rows)
+                    po_values = map(self.po_row_to_values, po_rows)
                     curs.executemany(co_sql, co_values)
                     curs.executemany(po_sql, po_values)
 
     def create_table(self, schema):
         name_type = [
-            (sql.Identifier(column.name), sql.SQL(column.type))
+            (
+                sql.Identifier(column.name),
+                sql.SQL(column.type if column.nullable else column.type + " NOT NULL"),
+            )
             for column in schema.columns
         ]
         query = sql.SQL(" ").join(
@@ -316,13 +322,7 @@ class DataManager:
             ON CONFLICT (hash)
             DO NOTHING
         """
-        with psycopg.connect(
-            dbname=self.dbname,
-            user=self.user,
-            port=self.port,
-            host=self.host,
-            password=self.password,
-        ) as conn:
+        with self._connect() as conn:
             with conn.cursor() as curs:
                 curs.execute(sql, (md5_hash, last_modified, json_pd))
         # TODO: insert columns into po table
@@ -429,13 +429,7 @@ class DataManager:
         WHERE table_name = %s
         ORDER BY ordinal_position;
         """
-        with psycopg.connect(
-            dbname=self.dbname,
-            user=self.user,
-            port=self.port,
-            host=self.host,
-            password=self.password,
-        ) as conn:
+        with self._connect() as conn:
             with conn.cursor() as curs:
                 curs.execute(query, (table_name,))
                 schema = curs.fetchall()
@@ -485,22 +479,17 @@ class DataManager:
 
         ds_sql = self.get_ds_sql()
         values = self.ds_row_to_values(row)
-        with psycopg.connect(
-            dbname=self.dbname,
-            user=self.user,
-            port=self.port,
-            host=self.host,
-            password=self.password,
-        ) as conn:
+        with self._connect() as conn:
             with conn.cursor() as curs:
                 curs.execute(ds_sql, values)
 
     def insert_new_column(self, table, column_name, data_type):
-        sql = f"""
-            ALTER TABLE {table}
-            ADD COLUMN {column_name} {data_type};
-        """
-        self.execute_sql(sql)
+        query = sql.SQL("ALTER TABLE {} ADD COLUMN {} {};").format(
+            sql.Identifier(table),
+            sql.Identifier(column_name),
+            sql.SQL(data_type),
+        )
+        self.execute_sql(query)
 
     def update_dataset(self, configs, dataset_id, prop_map):
         # convert to CF AtomicConfiguration if not already
@@ -539,8 +528,7 @@ class DataManager:
 
         old_ds = self.get_dataset(dataset_id)[0]
 
-        # links is stored as str(dict); parse it back to recover the components
-        links = ast.literal_eval(old_ds["links"]) if old_ds["links"] else {}
+        links = old_ds.get("links") or {}
         s = links.get("source-publication")
         d = links.get("source-data")
         o = links.get("other")
@@ -568,57 +556,34 @@ class DataManager:
 
         ds_sql = self.get_ds_sql()
         values = self.ds_row_to_values(row)
-        with psycopg.connect(
-            dbname=self.dbname,
-            user=self.user,
-            port=self.port,
-            host=self.host,
-            password=self.password,
-        ) as conn:
+        with self._connect() as conn:
             with conn.cursor() as curs:
                 curs.execute(ds_sql, values)
                 return new_dataset_id
 
     def get_dataset_data(self, dataset_id):
-        sql = f"""
-        SELECT
-            c.*,
-            po.*
-        FROM
-            configurations c
-        INNER JOIN
-            (SELECT * FROM property_objects WHERE dataset_id = '{dataset_id}') po
-        ON
-            c.id = po.configuration_id;
+        query = """
+        SELECT c.*, po.*
+        FROM configurations c
+        INNER JOIN (
+            SELECT * FROM property_objects WHERE dataset_id = %s
+        ) po ON c.id = po.configuration_id;
         """
-        return self.general_query(sql)
+        return self.general_query(query, (dataset_id,))
 
-    def general_query(self, sql):
-        with psycopg.connect(
-            dbname=self.dbname,
-            user=self.user,
-            port=self.port,
-            host=self.host,
-            password=self.password,
-            row_factory=dict_row,
-        ) as conn:
+    def general_query(self, query, params=None):
+        with self._connect(row_factory=dict_row) as conn:
             with conn.cursor() as curs:
-                curs.execute(sql)
+                curs.execute(query, params)
                 try:
                     return curs.fetchall()
-                except:
+                except psycopg.ProgrammingError:
                     return
 
-    def execute_sql(self, sql):
-        with psycopg.connect(
-            dbname=self.dbname,
-            user=self.user,
-            port=self.port,
-            host=self.host,
-            password=self.password,
-        ) as conn:
+    def execute_sql(self, query):
+        with self._connect() as conn:
             with conn.cursor() as curs:
-                curs.execute(sql)
+                curs.execute(query)
 
     def dataset_query(
         self,
@@ -626,36 +591,26 @@ class DataManager:
         table_name=None,
     ):
         if table_name == "configurations":
-            sql = f"""
+            query = """
                 SELECT *
                 FROM configurations
                 WHERE id IN (
                     SELECT DISTINCT configuration_id
                     FROM property_objects
-                    WHERE dataset_id = '{dataset_id}'
+                    WHERE dataset_id = %s
                 );
             """
         elif table_name == "property_objects":
-            sql = f"""
-                SELECT *
-                FROM {table_name}
-                WHERE dataset_id = '{dataset_id}';
-            """
+            query = "SELECT * FROM property_objects WHERE dataset_id = %s;"
         else:
             raise Exception(
                 "Only configurations and property_objects tables are supported"
             )
-
-        return self.general_query(sql)
+        return self.general_query(query, (dataset_id,))
 
     def get_dataset(self, dataset_id):
-        sql = f"""
-                SELECT *
-                FROM datasets
-                WHERE id = '{dataset_id}';
-            """
-        print(dataset_id)
-        return self.general_query(sql)
+        query = "SELECT * FROM datasets WHERE id = %s;"
+        return self.general_query(query, (dataset_id,))
 
     @staticmethod
     def get_cs_sql():
@@ -716,14 +671,7 @@ class DataManager:
                 sql.SQL(";"),
             ]
         )
-        with psycopg.connect(
-            dbname=self.dbname,
-            user=self.user,
-            port=self.port,
-            host=self.host,
-            password=self.password,
-            row_factory=dict_row,
-        ) as conn:
+        with self._connect(row_factory=dict_row) as conn:
             with conn.cursor() as curs:
                 curs.execute(query, params)
                 return curs.fetchall()
@@ -763,13 +711,7 @@ class DataManager:
             map_values = [
                 (config_set.id, c["id"]) for c in configs if c.get("id") is not None
             ]
-            with psycopg.connect(
-                dbname=self.dbname,
-                user=self.user,
-                port=self.port,
-                host=self.host,
-                password=self.password,
-            ) as conn:
+            with self._connect() as conn:
                 with conn.cursor() as curs:
                     curs.execute(cs_sql, self.cs_row_to_values(config_set.row_dict))
                     curs.executemany(map_sql, map_values)
@@ -783,13 +725,7 @@ class DataManager:
             WHERE id = %s;
         """
         # TODO: delete children as well
-        with psycopg.connect(
-            dbname=self.dbname,
-            user=self.user,
-            port=self.port,
-            host=self.host,
-            password=self.password,
-        ) as conn:
+        with self._connect() as conn:
             with conn.cursor() as curs:
                 curs.execute(sql, (dataset_id,))
 
@@ -807,17 +743,23 @@ class DataManager:
         query = sql.SQL(
             "SELECT id, COUNT(*) AS count FROM {} " "GROUP BY id HAVING COUNT(*) > 1;"
         ).format(sql.Identifier(table_name))
-        with psycopg.connect(
-            dbname=self.dbname,
-            user=self.user,
-            port=self.port,
-            host=self.host,
-            password=self.password,
-            row_factory=dict_row,
-        ) as conn:
+        with self._connect(row_factory=dict_row) as conn:
             with conn.cursor() as curs:
                 curs.execute(query)
                 return curs.fetchall()
+
+    def create_indexes(self):
+        """Create secondary indexes on hot-path lookup columns."""
+        statements = [
+            "CREATE INDEX IF NOT EXISTS idx_po_dataset_id ON property_objects (dataset_id);",
+            "CREATE INDEX IF NOT EXISTS idx_po_config_id ON property_objects (configuration_id);",
+            "CREATE INDEX IF NOT EXISTS idx_co_id ON configurations (id);",
+            "CREATE INDEX IF NOT EXISTS idx_ds_id ON datasets (id);",
+            "CREATE INDEX IF NOT EXISTS idx_map_cs_id ON configuration_set_configuration_map (configuration_set_id);",
+            "CREATE INDEX IF NOT EXISTS idx_map_co_id ON configuration_set_configuration_map (configuration_id);",
+        ]
+        for stmt in statements:
+            self.execute_sql(stmt)
 
     def zero_multiplicity(self, dataset_id):
         """Reset ``multiplicity`` to 0 for all property objects of a dataset.
@@ -826,13 +768,7 @@ class DataManager:
         (ingest increments via ``ON CONFLICT (hash) DO UPDATE``).
         """
         query = "UPDATE property_objects SET multiplicity = 0 WHERE dataset_id = %s;"
-        with psycopg.connect(
-            dbname=self.dbname,
-            user=self.user,
-            port=self.port,
-            host=self.host,
-            password=self.password,
-        ) as conn:
+        with self._connect() as conn:
             with conn.cursor() as curs:
                 curs.execute(query, (dataset_id,))
 
