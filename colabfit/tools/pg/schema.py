@@ -114,7 +114,7 @@ dataset_schema = Schema(
         column("description", "VARCHAR (10000)", True),
         column("extended_id", "VARCHAR (1000)", True),
         column("license", "VARCHAR (256)", True),
-        column("links", "VARCHAR (10000)", True),
+        column("links", "JSONB", True),
         column("publication_year", "VARCHAR (256)", True),
         column("doi", "VARCHAR (256)", True),
         column("equilibrium", "BOOL", True),

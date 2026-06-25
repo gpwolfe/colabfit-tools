@@ -231,13 +231,11 @@ class Dataset:
         row_dict["authors"] = self.authors
         row_dict["description"] = self.description
         row_dict["license"] = self.data_license
-        row_dict["links"] = str(
-            {
-                "source-publication": self.publication_link,
-                "source-data": self.data_link,
-                "other": self.other_links,
-            }
-        )
+        row_dict["links"] = {
+            "source-publication": self.publication_link,
+            "source-data": self.data_link,
+            "other": self.other_links,
+        }
         row_dict["name"] = self.name
         row_dict["publication_year"] = self.publication_year
         row_dict["doi"] = self.doi

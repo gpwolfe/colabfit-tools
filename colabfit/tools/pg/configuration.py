@@ -196,7 +196,7 @@ class AtomicConfiguration(Atoms):
         return co_dict
 
     @classmethod
-    def from_ase(self, atoms):
+    def from_ase(cls, atoms):
         """
         Generates an :class:`AtomicConfiguration` from an :code:`ase.Atoms` object.
         """
@@ -222,7 +222,7 @@ class AtomicConfiguration(Atoms):
                     info[k] = list(v)
             else:
                 info[k] = v
-        config = self(
+        config = cls(
             constraint=constraints,
             celldisp=dct.pop("celldisp", None),
             info=info,
