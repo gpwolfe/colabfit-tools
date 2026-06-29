@@ -22,6 +22,3 @@ Documentation for the PostGreSQL version will be forthcoming.
 
 # Documentation
 The documentation can be found online at https://colabfit.github.io/colabfit-tools/.
-
-# Example data
-Contact [Eric](https://github.com/EFuem/) if you would like access to the datasets associated with [the provided examples](examples).
